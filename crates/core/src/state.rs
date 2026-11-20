@@ -3803,7 +3803,10 @@ impl AppState {
             if q.repeat != RepeatMode::Off {
                 return 0; // the queue never exhausts under repeat
             }
-            if q.items.len().saturating_sub(q.current) > 2 {
+            // Spotify shows "Next up: Recommended tracks" from the start: the first batch lands as
+            // soon as a queue plays; later batches still wait for the tail (last two tracks).
+            let has_auto = q.items.iter().skip(q.current).any(|s| s.autoplay);
+            if has_auto && q.items.len().saturating_sub(q.current) > 2 {
                 return 0; // tail not near yet
             }
             // ── stream: autoplay ── setting off, a podcast at the end, nothing to seed from:

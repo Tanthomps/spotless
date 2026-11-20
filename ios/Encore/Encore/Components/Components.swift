@@ -141,9 +141,16 @@ struct LibraryGlyph: View {
             for x in [3.0, 8.0] {
                 ctx.fill(Path(roundedRect: CGRect(x: x * s, y: 3 * s, width: 2 * s, height: 18 * s), cornerRadius: 1 * s), with: .foreground)
             }
-            let book = Path(roundedRect: CGRect(x: 13 * s, y: 3 * s, width: 8 * s, height: 18 * s), cornerRadius: 1.5 * s)
+            // The book leans: its top edge rises from left to right (Spotify's glyph).
+            var book = Path()
+            book.move(to: CGPoint(x: 14 * s, y: 6 * s))
+            book.addLine(to: CGPoint(x: 20 * s, y: 3.5 * s))
+            book.addLine(to: CGPoint(x: 20 * s, y: 20 * s))
+            book.addLine(to: CGPoint(x: 14 * s, y: 20 * s))
+            book.closeSubpath()
+            let edge = StrokeStyle(lineWidth: 2 * s, lineCap: .round, lineJoin: .round)
             if filled { ctx.fill(book, with: .foreground) }
-            else { ctx.stroke(book.strokedPath(StrokeStyle(lineWidth: 2 * s)), with: .foreground) }
+            ctx.stroke(book, with: .foreground, style: edge)
         }
         .frame(width: size, height: size)
     }

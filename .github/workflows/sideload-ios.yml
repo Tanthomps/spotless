@@ -1,0 +1,197 @@
+# Builds YOUR fork's iPhone app as an unsigned IPA and publishes it with a SideStore/AltStore source.
+# No Apple account needed: SideStore/AltStore sign the app on the phone with your own Apple ID.
+#
+# Add this source once in SideStore (Sources > +):
+#   https://github.com/<you>/<repo>/releases/download/sideload/altstore.json
+# Every new build then shows up in SideStore as an update.
+#
+# Runs when:
+#   - you push changes to the iPhone app or the shared core on main
+#   - you start it by hand: Actions > Sideload iOS > Run workflow
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables), all optional:
+#   SIDELOAD_BUNDLE_ID   bundle ID for your build (default com.<owner>.spotless), so it can sit
+#                        next to the official Spotless on the phone
+#   SIDELOAD_APP_NAME    name shown in SideStore (default "Spotless (<owner>)")
+#
+# release-ios.yml is the original author's App Store pipeline (needs their Apple keys, runs only on
+# ios-v* tags); this workflow is the one to use.
+name: Sideload iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/sideload-ios.yml"
+
+permissions:
+  contents: write   # the "sideload" GitHub release
+
+concurrency:
+  group: sideload-ios
+  cancel-in-progress: true
+
+env:
+  PROJECT_DIR: ios/Encore
+  RELEASE_TAG: sideload
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Names and version
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VAR_BUNDLE_ID: ${{ vars.SIDELOAD_BUNDLE_ID }}
+          VAR_APP_NAME: ${{ vars.SIDELOAD_APP_NAME }}
+        run: |
+          set -euo pipefail
+          owner="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+          BUNDLE_ID="${VAR_BUNDLE_ID:-com.$owner.spotless}"
+          APP_NAME="${VAR_APP_NAME:-Spotless ($OWNER)}"
+          yml="$PROJECT_DIR/project.yml"
+          VERSION="$(sed -n -E 's/^ *MARKETING_VERSION: *"?([^"]*)"? *$/\1/p' "$yml" | head -1)"
+          UPSTREAM_BUILD="$(sed -n -E 's/^ *CURRENT_PROJECT_VERSION: *"?([^"]*)"? *$/\1/p' "$yml" | head -1)"
+          # <upstream build>.<run number>: grows with every build here, so SideStore always sees an
+          # update, including builds that only carry your own changes.
+          BUILD="$UPSTREAM_BUILD.$GITHUB_RUN_NUMBER"
+          echo "$APP_NAME  $BUNDLE_ID  $VERSION ($BUILD)"
+          {
+            echo "BUNDLE_ID=$BUNDLE_ID"
+            echo "APP_NAME=$APP_NAME"
+            echo "VERSION=$VERSION"
+            echo "BUILD=$BUILD"
+            echo "ARCHIVE=$RUNNER_TEMP/Spotless.xcarchive"
+            echo "SPM_DIR=$RUNNER_TEMP/spm"
+          } >> "$GITHUB_ENV"
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sideload-ios
+          workspaces: ". -> target/ios"
+          cache-on-failure: false
+
+      # The bindings build links against libmpv on the host (same pinned set release-ios.yml uses).
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/encore-cache
+          key: libmpv-iina-arm64-${{ hashFiles('scripts/macos/fetch-libmpv.sh') }}
+
+      - name: libmpv (host, for the bindings build)
+        env:
+          ENCORE_CACHE: ${{ runner.temp }}/encore-cache
+        run: |
+          LIBDIR="$(scripts/macos/fetch-libmpv.sh --arch arm64 | tail -1)"
+          echo "LIBRARY_PATH=$LIBDIR" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/spm
+          key: spm-ios-${{ hashFiles('ios/EncoreCore/Package.resolved', 'ios/EncoreCore/Package.swift', 'ios/Encore/project.yml') }}
+          restore-keys: spm-ios-
+
+      - name: Rust core for iOS (device, release)
+        run: scripts/build-ios-core.sh --release --device
+
+      - name: Generate the Xcode project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          (cd "$PROJECT_DIR" && xcodegen generate)
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "$PROJECT_DIR/Encore.xcodeproj" -scheme Encore \
+            -clonedSourcePackagesDirPath "$SPM_DIR"
+
+      # Unsigned archive: no team, no certificates. SideStore/AltStore sign it on the phone.
+      - name: Archive (unsigned)
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/archive.log"
+          status=0
+          xcodebuild archive \
+            -project "$PROJECT_DIR/Encore.xcodeproj" -scheme Encore -configuration Release \
+            -destination generic/platform=iOS -archivePath "$ARCHIVE" \
+            -clonedSourcePackagesDirPath "$SPM_DIR" -skipPackageUpdates \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD" > "$LOG" 2>&1 || status=$?
+          grep -E 'error:|\*\* ARCHIVE' "$LOG" | sort -u | head -100 || true
+          if [ "$status" -ne 0 ]; then tail -80 "$LOG"; echo "::error::archive failed"; exit 1; fi
+          INFO="$ARCHIVE/Products/Applications/Encore.app/Info.plist"
+          echo "archived $(plutil -extract CFBundleIdentifier raw "$INFO") $(plutil -extract CFBundleShortVersionString raw "$INFO") ($(plutil -extract CFBundleVersion raw "$INFO"))"
+
+      - name: Package the IPA
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/ipa"
+          rm -rf "$STAGE"; mkdir -p "$STAGE/Payload"
+          APP="$STAGE/Payload/Spotless.app"
+          ditto "$ARCHIVE/Products/Applications/Encore.app" "$APP"
+          rm -f "$APP/embedded.mobileprovision"
+          find "$APP" -name _CodeSignature -type d -prune -exec rm -rf {} +
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q '^Mach-O'; then codesign --remove-signature "$f" 2>/dev/null || true; fi
+          done < <(find "$APP" -type f -perm -u+x -print0)
+          IPA="$RUNNER_TEMP/Spotless.ipa"
+          (cd "$STAGE" && zip -qry -X "$IPA" Payload)
+          echo "Spotless.ipa: $(du -h "$IPA" | cut -f1)"
+          { echo "IPA=$IPA"; echo "IPA_APP=$APP"; } >> "$GITHUB_ENV"
+
+      # Reuses the upstream source generator, then swaps in this fork's identity, so the upstream
+      # script stays untouched and merges cleanly.
+      - name: SideStore source
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/sideload"; mkdir -p "$OUT"
+          cp "$IPA" "$OUT/Spotless.ipa"
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/Spotless.ipa"
+          ruby scripts/ci/altstore-source.rb "$IPA_APP" "$IPA" "$URL" > "$OUT/upstream.json"
+          ruby -rjson -e '
+            s = JSON.parse(File.read(ARGV[0]))
+            name, bundle, repo = ARGV[1], ARGV[2], ARGV[3]
+            s["name"] = name
+            s["identifier"] = "#{bundle}.source"
+            s["description"] = "Personal build of Spotless from github.com/#{repo}. Based on fjenn/spotless (GPL-3.0)."
+            s["website"] = "https://github.com/#{repo}"
+            app = s["apps"][0]
+            app["name"] = name
+            app["bundleIdentifier"] = bundle
+            app["developerName"] = repo.split("/")[0]
+            puts JSON.pretty_generate(s)
+          ' "$OUT/upstream.json" "$APP_NAME" "$BUNDLE_ID" "$GITHUB_REPOSITORY" > "$OUT/altstore.json"
+          rm "$OUT/upstream.json"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --latest=false \
+              --title "iPhone sideload build" \
+              --notes "Add this source in SideStore or AltStore: https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/altstore.json"
+          fi
+          gh release upload "$RELEASE_TAG" "$OUT/Spotless.ipa" "$OUT/altstore.json" --clobber
+          {
+            echo "### $APP_NAME $VERSION ($BUILD) published"
+            echo "SideStore source: https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/altstore.json"
+          } >> "$GITHUB_STEP_SUMMARY"

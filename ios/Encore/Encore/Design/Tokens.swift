@@ -83,7 +83,7 @@ enum Typo {
     static let tabLabel = font(10, .medium)
     static let miniTitle = font(14, .bold)
     static let miniArtist = font(14, .regular)
-    static let npTitle = font(22, .bold)
+    static let npTitle = font(24, .bold)
     static let npArtist = font(16, .regular)
     static let time = font(11, .regular)
     static let meta = font(13, .regular)

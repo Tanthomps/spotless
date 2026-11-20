@@ -105,7 +105,7 @@ struct EntityScaffold<Header: View, Content: View>: View {
             HStack {
                 Button { dismiss() } label: {
                     Icon(name: "caret-left", size: 24).frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.black.opacity(heroHeader ? 0.4 * (1 - progress) : 0)))
+                        .background(Circle().fill(heroHeader ? (progress >= 1 ? Palette.highlight : Color.black.opacity(0.4)) : .clear))
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .accessibilityLabel("Back")
@@ -116,7 +116,7 @@ struct EntityScaffold<Header: View, Content: View>: View {
         }
         .frame(height: navHeight)
         .padding(.top, top)
-        .background((heroHeader ? (accent?.surface(value: 0.4) ?? Color(hex: "#3a3a3a")) : tint.mix(with: .black, by: 0.35)).opacity(progress))
+        .background((heroHeader ? Palette.base : tint.mix(with: .black, by: 0.35)).opacity(progress))
         .animation(.easeOut(duration: 0.15), value: progress >= 1)
     }
 }
@@ -708,10 +708,12 @@ struct ArtistView: View {
                 }
                 if top.count > 5 {
                     // A plain text button under the five rows (Spotify), not a pill.
-                    Button(showAllPopular ? "Show less" : "See more") { withAnimation { showAllPopular.toggle() } }
-                        .font(Typo.font(14, .bold)).foregroundStyle(Palette.subdued)
-                        .frame(height: 44)
-                        .padding(.horizontal, Space.gutter)
+                    // Spotify: an outlined "Show more" pill centred under the rows.
+                    Button(showAllPopular ? "Show less" : "Show more") { withAnimation { showAllPopular.toggle() } }
+                        .font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
+                        .padding(.horizontal, 16).frame(height: 32)
+                        .overlay(Capsule().stroke(Palette.muted, lineWidth: 1))
+                        .frame(maxWidth: .infinity).frame(height: 44)
                 }
                 // Spotify's order: Popular, Discography, then the rest (Featuring, Fans also like…).
                 if !disco.filters.isEmpty {

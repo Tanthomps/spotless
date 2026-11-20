@@ -352,7 +352,10 @@ struct RowSwipe: ViewModifier {
     private var swipe: some Gesture {
         DragGesture(minimumDistance: 14)
             .onChanged { v in
-                if axis == nil { axis = abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical }
+                if axis == nil {
+                    let edge = v.translation.width > 0 && v.startLocation.x < 40
+                    axis = !edge && abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical
+                }
                 guard axis == .horizontal else { return }
                 changed(v.translation.width)
             }
@@ -390,10 +393,16 @@ struct RowPan: UIGestureRecognizerRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
             guard let p = g as? UIPanGestureRecognizer else { return true }
-            if let w = p.view?.window, p.location(in: w).x < 24 { return false }
             let v = p.velocity(in: p.view), t = p.translation(in: p.view)
             let x = abs(v.x) + abs(v.y) > 1 ? v : CGPoint(x: t.x, y: t.y)
+            // A rightward drag starting in the left 15% of the screen is the back swipe, not "queue".
+            if let w = p.view?.window, x.x > 0, p.location(in: w).x - t.x < max(56, w.bounds.width * 0.15) { return false }
             return abs(x.x) > abs(x.y) * 1.2
+        }
+
+        /// The navigation back swipe always gets first claim.
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
+            other is UIScreenEdgePanGestureRecognizer
         }
 
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {

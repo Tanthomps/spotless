@@ -17,11 +17,11 @@ struct NPVideoSwitch: View {
                 IconSwap(name: on ? "music-note" : "monitor-play", size: 16)
                 Text(on ? "Switch to audio" : "Switch to video").font(Typo.font(13, .bold))
             }
-            .foregroundStyle(Palette.text)
+            // Spotify: a quiet pill under the cover, grey text on a faint fill, left-aligned.
+            .foregroundStyle(compact ? Palette.text : Palette.text.opacity(0.6))
             .padding(.horizontal, 14)
             .frame(height: 32)
-            .background(Capsule().fill(Color.black.opacity(compact ? 0.45 : 0.28)))
-            .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+            .background(Capsule().fill(compact ? Color.black.opacity(0.45) : Color.white.opacity(0.08)))
             .contentShape(Capsule())
         }
         .buttonStyle(PressScale(scale: 0.95))

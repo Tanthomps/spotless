@@ -4,6 +4,12 @@
 import SwiftUI
 
 struct NowPlayingCover: View {
+    /// Under a parent that ignores the safe area the reader reports 0 on a real phone, which put the
+    /// header under the Dynamic Island: take the window's own insets when they are larger.
+    static func safeInsets(_ e: EdgeInsets) -> EdgeInsets {
+        let w = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets ?? .zero
+        return EdgeInsets(top: max(e.top, w.top), leading: max(e.leading, w.left), bottom: max(e.bottom, w.bottom), trailing: max(e.trailing, w.right))
+    }
     static let openAnimation = Animation.spring(response: 0.42, dampingFraction: 0.9)
     static let closeAnimation = Animation.spring(response: 0.34, dampingFraction: 0.9)
     @Environment(AppModel.self) private var app
@@ -20,7 +26,7 @@ struct NowPlayingCover: View {
             let fullscreen = open && VideoStore.shared.fullscreen
             ZStack {
                 if app.player.hasTrack {
-                    NowPlayingView(drag: $drag, screenHeight: h, insets: geo.safeAreaInsets)
+                    NowPlayingView(drag: $drag, screenHeight: h, insets: Self.safeInsets(geo.safeAreaInsets))
                         .opacity(fullscreen ? 0 : 1)
                         .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { ArtFlight.shared.npSheetY = $0 }
                 }
@@ -61,9 +67,12 @@ struct NowPlayingView: View {
     @State private var pill: String?
     @State private var pillTask: Task<Void, Never>?
     @State private var savingEpisode = false
+    /// Spotify: a screenshot on Now Playing raises the song's share card.
+    @State private var shareCard: SongItem?
 
     private var player: PlayerStore { app.player }
-    private var bg: Color { accent?.surface(value: 0.5, maxSaturation: 0.7) ?? Color(hex: "#404040") }
+    /// Spotify mutes the cover's colour hard (a bright teal cover gives a dark teal page).
+    private var bg: Color { accent?.surface(value: 0.36, maxSaturation: 0.5) ?? Color(hex: "#3a3a3a") }
 
     var body: some View {
         GeometryReader { geo in
@@ -101,6 +110,16 @@ struct NowPlayingView: View {
         .background(Color(hex: "#121212").ignoresSafeArea())
         .clipShape(RoundedRectangle(cornerRadius: drag > 0 ? 40 : 0, style: .continuous))
         .artAccent(player.current?.thumbnail ?? player.now?.thumbnail, into: $accent)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+            if let s = player.current, s.isEpisode != true, shareCard == nil { shareCard = s }
+        }
+        .sheet(item: $shareCard) { s in
+            ShareCardSheet(song: s, accent: accent).environment(app)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground { SheetGlass() }
+                .presentationCornerRadius(Radius.glassSheet)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("now-playing")
         .overlay {
@@ -150,21 +169,39 @@ struct NowPlayingView: View {
 
     // MARK: first page
 
+    /// Spotify's first page, measured on an iPhone 15 Pro Max (430 × 932 pt): header centre 24 under
+    /// the status bar, cover 24 pt from each side, video pill 52 under it, title, scrubber, controls
+    /// and the device/share/queue row at fixed gaps, the lyrics card peeking right after. On a shorter
+    /// phone the gaps (not the cover) shrink in proportion.
     private func mainPage(safeTop: CGFloat, height: CGFloat) -> some View {
         let song = player.current
+        let art = UIScreen.main.bounds.width - Space.xl * 2
+        // header 48 · pill 32 · title 51 · scrubber 37 · controls 64 · bottom row 44
+        let fixed: CGFloat = 276
+        let gaps: CGFloat = 149.5
+        let room = height - safeTop - 32 - fixed - art
+        let k = min(1.4, max(0.4, room / gaps))
         return VStack(spacing: 0) {
-            header
-            Spacer(minLength: Space.l)
+            header.frame(height: 48)
+            Color.clear.frame(height: 51.4 * k)
             // A music video / video podcast replaces the cover; the pill switches between them (stream
             // ios-video). Either one swipes to the neighbour; a tap on the video shows its controls.
             NPArtwork(fallback: song?.thumbnail ?? player.now?.thumbnail, video: VideoStore.shared.showsVideo)
-            if VideoStore.shared.canSwitch {
-                NPVideoSwitch().padding(.top, Space.l)
+                .frame(width: art, height: art)
+            Color.clear.frame(height: 52.6 * k)
+            // The pill's slot is kept when there is no video, so the title never jumps between songs.
+            Group {
+                if VideoStore.shared.canSwitch { NPVideoSwitch() } else { Color.clear }
             }
-            Spacer(minLength: Space.xl)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 32)
+            Color.clear.frame(height: 9.5 * k)
             titleRow(song)
-            Scrubber().padding(.top, 2)
-            controls.padding(.top, Space.s)
+            Color.clear.frame(height: 11 * k)
+            Scrubber()
+            Color.clear.frame(height: 17.7 * k)
+            controls
+                .padding(.horizontal, -6)
                 .overlay(alignment: .top) {
                     if let pill {
                         Text(pill).font(Typo.font(13, .semibold)).foregroundStyle(Palette.text)
@@ -175,12 +212,13 @@ struct NowPlayingView: View {
                             .accessibilityIdentifier("np-pill")
                     }
                 }
-            bottomRow.padding(.top, Space.xs)
-            Spacer(minLength: Space.l)
+            Color.clear.frame(height: 7.3 * k)
+            bottomRow
         }
         .padding(.horizontal, Space.xl)
         .padding(.top, safeTop)
-        .frame(height: height)
+        // The lyrics card starts 5 pt under the bottom row (the cards' own 16 pt spacing taken back).
+        .padding(.bottom, 5 - Space.l)
     }
 
     private var header: some View {
@@ -191,12 +229,11 @@ struct NowPlayingView: View {
             .accessibilityLabel("Close Now Playing")
             .accessibilityIdentifier("np-close")
             Spacer()
-            // Context kicker 11/400 +1 tracking white 70 %, context name 13/700; tap opens the context page.
+            // Spotify: just the context's name, 15/700, centred; tap opens the context page.
             Button { openContext() } label: {
                 VStack(spacing: 1) {
-                    Text(contextLabel).font(Typo.font(11)).tracking(1).foregroundStyle(Palette.text.opacity(0.7))
-                        .lineLimit(1)
-                    Text(player.queue.sourceName ?? player.now?.album ?? "").font(Typo.font(13, .bold)).foregroundStyle(Palette.text)
+                    let name = player.queue.sourceName ?? player.now?.album ?? ""
+                    Text(name.isEmpty ? contextLabel.capitalized : name).font(Typo.font(15, .bold)).foregroundStyle(Palette.text)
                         .lineLimit(1)
                 }
                 .contentShape(Rectangle())
@@ -295,7 +332,7 @@ struct NowPlayingView: View {
                         app.showToast(on ? "Added to Your Episodes" : "Removed from Your Episodes")
                     }
                 } label: {
-                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 28)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 36)
                         .foregroundStyle(saved ? Palette.accent : Palette.text).pulse(on: saved)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Episodes" : "Add to Your Episodes")
@@ -303,7 +340,7 @@ struct NowPlayingView: View {
             } else if let s = song {
                 let liked = app.library.isLiked(s.videoId)
                 Button { app.likeButton(s) } label: {
-                    IconSwap(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 28)
+                    IconSwap(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 36)
                         .foregroundStyle(liked ? Palette.accent : Palette.text)
                         .pulse(on: liked)
                 }
@@ -380,7 +417,7 @@ struct NowPlayingView: View {
     private var musicControls: some View {
         HStack {
             Button { cycleShuffle() } label: {
-                ToggleIcon(name: "shuffle", on: player.shuffle || smartOn, size: 24)
+                ToggleIcon(name: "shuffle", on: player.shuffle || smartOn, size: 28)
                     .overlay(alignment: .topTrailing) {
                         if smartOn {
                             Icon(name: "sparkle", fill: true, size: 11).foregroundStyle(Palette.accent).offset(x: -6, y: 8)
@@ -391,7 +428,7 @@ struct NowPlayingView: View {
             .accessibilityIdentifier("np-shuffle")
             Spacer()
             Button { player.skipPrevious() } label: {
-                Icon(name: "skip-back", fill: true, size: 36).foregroundStyle(Palette.text).frame(width: 52, height: 52)
+                Icon(name: "skip-back", fill: true, size: 32).foregroundStyle(Palette.text).frame(width: 52, height: 52)
             }
             .accessibilityLabel("Previous")
             Spacer()
@@ -399,13 +436,13 @@ struct NowPlayingView: View {
                 .accessibilityIdentifier("np-play")
             Spacer()
             Button { player.skipNext() } label: {
-                Icon(name: "skip-forward", fill: true, size: 36).foregroundStyle(Palette.text).frame(width: 52, height: 52)
+                Icon(name: "skip-forward", fill: true, size: 32).foregroundStyle(Palette.text).frame(width: 52, height: 52)
             }
             .accessibilityLabel("Next")
             .accessibilityIdentifier("np-next")
             Spacer()
             Button { player.cycleRepeat() } label: {
-                ToggleIcon(name: player.repeatMode == .one ? "repeat-once" : "repeat", on: player.repeatMode != .off, size: 24)
+                ToggleIcon(name: player.repeatMode == .one ? "repeat-once" : "repeat", on: player.repeatMode != .off, size: 28)
             }
             .accessibilityLabel("Repeat")
         }
@@ -418,8 +455,8 @@ struct NowPlayingView: View {
             // Accent glyph plus the device's name in accent while the audio plays elsewhere (Spotify).
             let device = AudioRoute.shared.externalName
             HStack(spacing: 6) {
-                Icon(name: "devices", size: 20).foregroundStyle(device == nil ? Palette.text.opacity(0.85) : Palette.accent)
-                    .frame(width: 20, height: 44)
+                Icon(name: "devices", size: 22).foregroundStyle(device == nil ? Palette.text.opacity(0.85) : Palette.accent)
+                    .frame(width: 22, height: 44)
                 if let device {
                     Text(device).font(Typo.font(12, .bold)).foregroundStyle(Palette.accentText).lineLimit(1)
                         .accessibilityIdentifier("np-device")
@@ -429,13 +466,15 @@ struct NowPlayingView: View {
             .routePickerOverlay()
             Spacer(minLength: Space.m)
             Button { if let s = app.player.current { ShareSheet.present(.song(s), app: app) } } label: {
-                Icon(name: "export", size: 20).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 44, height: 44)
+                Icon(name: "export", size: 24).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 44, height: 44)
             }
                 .accessibilityLabel("Share")
                 .accessibilityIdentifier("np-share")
-                .padding(.trailing, Space.s)
+                .padding(.trailing, 3.5)
+            // Spotify: queue flush with the cover's right edge, share 47 pt to its left (centre to centre).
             Button { app.router.queueOpen = true } label: {
-                Icon(name: "queue", size: 20).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 44, height: 44, alignment: .trailing)
+                Icon(name: "queue", size: 22).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 32, height: 44, alignment: .trailing)
+                    .contentShape(Rectangle().inset(by: -6))
             }
                 .accessibilityLabel("Queue")
                 .accessibilityIdentifier("np-queue")
@@ -790,7 +829,7 @@ struct Scrubber: View {
                             .accessibilityIdentifier("np-scrubber-chapter")
                         Spacer()
                     }
-                    Text("-" + timecode(max(0, p.duration - value * p.duration)))
+                    Text(timecode(p.duration))
                 }
                 .font(Typo.time).monospacedDigit().foregroundStyle(Palette.text.opacity(0.7))
                 .padding(.top, -8)

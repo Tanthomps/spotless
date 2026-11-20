@@ -400,11 +400,43 @@ struct AccountPhoto: View {
 }
 
 /// The profile avatar in Settings: the YouTube account's photo when signed in, else the app's.
+/// Your own profile photo (Settings › Account), kept on this iPhone. It wins over the YouTube photo.
+@MainActor @Observable final class ProfilePhoto {
+    static let shared = ProfilePhoto()
+    private(set) var image: UIImage?
+    private static var file: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("profile-photo.jpg")
+    }
+    private init() { image = UIImage(contentsOfFile: Self.file.path) }
+
+    /// Square-cropped from the centre at up to 600 px: it's only ever shown as a small circle.
+    func set(_ picked: UIImage) throws {
+        let side = min(picked.size.width, picked.size.height)
+        let out = min(600, side)
+        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
+        let square = UIGraphicsImageRenderer(size: CGSize(width: out, height: out), format: fmt).image { _ in
+            let k = out / side, w = picked.size.width * k, h = picked.size.height * k
+            picked.draw(in: CGRect(x: (out - w) / 2, y: (out - h) / 2, width: w, height: h))
+        }
+        guard let data = square.jpegData(compressionQuality: 0.9) else { throw CocoaError(.fileWriteUnknown) }
+        try data.write(to: Self.file, options: .atomic)
+        image = square
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: Self.file)
+        image = nil
+    }
+}
+
 struct ProfileAvatar: View {
     @Environment(AppModel.self) private var app
     let size: CGFloat
     var body: some View {
-        if app.account.signedIn {
+        if let photo = ProfilePhoto.shared.image {
+            Image(uiImage: photo).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+                .accessibilityLabel("Profile photo")
+        } else if app.account.signedIn {
             AccountPhoto(url: app.account.account.thumbnail, name: app.localUser, size: size)
         } else {
             Avatar(size: size, opensMenu: false)

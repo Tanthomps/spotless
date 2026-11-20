@@ -554,6 +554,11 @@ struct Avatar: View {
     var body: some View {
         Circle().fill(Color(hex: "#f573a0")).frame(width: size, height: size)
             .overlay(Text(String(app.localUser.prefix(1)).uppercased()).font(Typo.font(size * 0.45, .bold)).foregroundStyle(.black))
+            .overlay {
+                if let photo = ProfilePhoto.shared.image {
+                    Image(uiImage: photo).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if opensMenu && app.settings.whatsNewCount > 0 {
                     Circle().fill(Palette.announcement).frame(width: size * 0.3, height: size * 0.3)

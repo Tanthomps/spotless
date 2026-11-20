@@ -38,17 +38,16 @@ enum Palette {
     static let meta = Color(hex: "#cdcdcd")
     static let muted = Color.white.opacity(0.7)
     static let dim = Color(hex: "#7c7c7c")
-    // accent: Spotless brand pink (scripts/brand/final.py PINK) is the ONE accent; nothing else
-    // hard-codes it. Hover = 12% toward white, press = 12% toward black. Black sits on it (~5.9:1;
-    // white would be ~3.6:1). As words on dark surfaces use `accentText`: the base is ~5.3:1 on
-    // #121212 but drops toward 4:1 on the raised #1f1f1f/#282828 sheets and cards.
-    static let accent = Color(hex: "#ff2d7a")
-    static let accentHover = Color(hex: "#ff468a")
-    static let accentPress = Color(hex: "#e0286b")
-    static let accentText = Color(hex: "#ff4f8f")
+    // accent: Spotify green (#1ED760, the current brand green) is the ONE accent; nothing else
+    // hard-codes it. Hover = 12% toward white, press = 12% toward black. Black sits on it (~11:1).
+    // As words on dark surfaces it reads ~10:1 on #121212 and stays above 7:1 on #282828.
+    static let accent = Color(hex: "#1ed760")
+    static let accentHover = Color(hex: "#39dc73")
+    static let accentPress = Color(hex: "#1abd54")
+    static let accentText = Color(hex: "#1ed760")
     /// Deep brand tile behind an accent glyph (Your Episodes).
-    static let accentTile = Color(hex: "#5a0e30")
-    static let accentTileDeep = Color(hex: "#33071b")
+    static let accentTile = Color(hex: "#0b5a2a")
+    static let accentTileDeep = Color(hex: "#063318")
     /// Semantic "went up" (chart trends): deliberately not the brand, so it can't be confused with
     /// the red "down" arrow.
     static let positive = Color(hex: "#34d399")
@@ -57,7 +56,7 @@ enum Palette {
     // progress
     static let progressTrack = Color.white.opacity(0.3)
     static let border = Color.white.opacity(0.10)
-    static let likedCover = LinearGradient(colors: [Color(hex: "#ff2d7a"), Color(hex: "#6a1b9a")],
+    static let likedCover = LinearGradient(colors: [Color(hex: "#450af5"), Color(hex: "#c4efd9")],
                                            startPoint: .topLeading, endPoint: .bottomTrailing)
     static let likedHeader = Color(red: 80 / 255, green: 56 / 255, blue: 160 / 255)
 }

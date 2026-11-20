@@ -9,7 +9,7 @@ import SwiftUI
 /// scripts/brand/gen-brand.py ship.
 struct SpotlessMark: View {
     var size: CGFloat = 24
-    static let disc = Color(hex: "#FF2D7A") // gen-brand
+    static let disc = Color(hex: "#1ED760") // gen-brand
     static let ink = Color(hex: "#000000") // gen-brand
     static let discShare: CGFloat = 0.8 // gen-brand
     var body: some View {

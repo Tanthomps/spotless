@@ -1338,6 +1338,8 @@ pub fn run() {
             sync::sync_status,
             sync::sync_start_pairing,
             sync::sync_cancel_pairing,
+            sync::presence_list,
+            sync::presence_send,
             sync::sync_join,
             sync::sync_unpair,
             sync::sync_now,

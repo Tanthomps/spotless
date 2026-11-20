@@ -16,6 +16,10 @@ final class DeviceSyncStore {
 
     let core: CoreClient
     var status = SyncStatus.unlinked
+    /// Linked devices playing something right now (Spotify's "Playing on <device>").
+    var remotes: [RemoteDevice] = []
+    /// The one to show: playing first, then the freshest.
+    var activeRemote: RemoteDevice? { remotes.first { $0.playing } ?? remotes.first }
 
     // the linking sheet
     var sheetOpen = false
@@ -76,12 +80,27 @@ final class DeviceSyncStore {
     func setActive(_ active: Bool) {
         Task {
             if let s = try? await core.syncSetActive(active) { apply(s) }
+            if active { refreshRemotes() }
         }
     }
 
     /// Every status from the core (`sync-changed` and command answers).
+    func refreshRemotes() {
+        guard status.paired else { remotes = []; return }
+        Task { if let r = try? await core.presenceList() { remotes = r } }
+    }
+
+    /// play / pause / next / prev on another device; shown at once, confirmed by its next presence.
+    func control(_ d: RemoteDevice, _ cmd: String) {
+        if let i = remotes.firstIndex(where: { $0.dev == d.dev }), cmd == "play" || cmd == "pause" { remotes[i].playing = cmd == "play" }
+        Haptics.selection()
+        Task { try? await core.presenceSend(dev: d.dev, cmd: cmd) }
+    }
+
     func apply(_ s: SyncStatus) {
+        let wasPaired = status.paired
         status = s
+        if s.paired != wasPaired { refreshRemotes() }
         guard step == .showCode, let shown, codeEnd == nil else { return }
         if s.pairing?.code == shown.code { sawCode = true; return }
         guard sawCode, s.pairing == nil else { return }

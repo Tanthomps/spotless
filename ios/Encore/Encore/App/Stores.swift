@@ -520,6 +520,7 @@ final class AppModel {
         // Only an episode's rate is the remembered one.
         case .playbackParams(let e): if currentIsEpisode { settings.speed = e.speed }
         case .syncChanged(let s): devices.apply(s)
+        case .presenceChanged(let r): devices.remotes = r
         case .unknown(let name): account.handle(event: name)
         }
         player.timeTap() // stream: instant

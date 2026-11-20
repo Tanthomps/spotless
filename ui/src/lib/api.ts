@@ -2237,6 +2237,22 @@ export const syncUnpair = () => invoke<SyncStatus>('sync_unpair');
 export const syncNow = () => invoke<SyncStatus>('sync_now');
 /** The window gained or lost focus: polls speed up or slow down. */
 export const syncSetActive = (active: boolean) => invoke<SyncStatus>('sync_set_active', { active });
+/** Another linked device's now-playing (presence.rs); `posMs` was read at `at` (ms). */
+export type RemoteDevice = {
+	dev: string;
+	name: string;
+	platform?: string;
+	song?: { videoId: string; title: string; artists: string; thumbnail?: string | null };
+	playing: boolean;
+	posMs?: number;
+	at?: number;
+};
+export const presenceList = () => invoke<RemoteDevice[]>('presence_list');
+/** Control another linked device: play, pause, next, prev. */
+export const presenceSend = (dev: string, cmd: 'play' | 'pause' | 'next' | 'prev') =>
+	invoke<null>('presence_send', { dev, cmd });
+export const onPresenceChanged = (cb: (p: RemoteDevice[]) => void): Promise<UnlistenFn> =>
+	listen<RemoteDevice[]>('presence-changed', (e) => cb(e.payload));
 export const onSyncChanged = (
 	cb: (p: { status: SyncStatus; entities: string[] }) => void
 ): Promise<UnlistenFn> =>

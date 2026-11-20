@@ -657,6 +657,7 @@ pub fn start(state: &Arc<crate::state::AppState>) {
     if ENGINE.set(engine.clone()).is_err() {
         return;
     }
+    crate::presence::start(state);
     crate::rt::spawn(async move {
         if engine.group().is_some() {
             let _ = engine.ensure_server().await;
@@ -691,7 +692,11 @@ fn remote_changed(st: &Arc<crate::state::AppState>, a: &Applied) {
     let st = st.clone();
     let settings = a.settings.clone();
     crate::rt::spawn(async move {
+        crate::presence::applied(&st, &settings).await;
         for key in settings {
+            if key.starts_with(crate::presence::PRESENCE) || key.starts_with(crate::presence::REMOTE) {
+                continue;
+            }
             if let Some(v) = st.db.get_setting(&key) {
                 crate::api::setting_applied(&st, &key, &v, true).await;
             }
@@ -744,6 +749,17 @@ pub async fn sync_set_active(active: bool) -> Result<Value, String> {
     let e = need()?;
     e.set_active(active);
     Ok(e.status())
+}
+
+/// The other linked devices playing something: `[{dev, name, platform, song, playing, posMs, at}]`.
+pub async fn presence_list(st: &Arc<crate::state::AppState>) -> Result<Value, String> {
+    Ok(crate::presence::list(st))
+}
+
+/// Control another linked device: `cmd` is play, pause, next or prev.
+pub async fn presence_send(st: &Arc<crate::state::AppState>, dev: String, cmd: String) -> Result<Value, String> {
+    crate::presence::send(st, &dev, &cmd)?;
+    Ok(Value::Null)
 }
 
 pub async fn sync_cancel_pairing() -> Result<Value, String> {

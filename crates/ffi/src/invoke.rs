@@ -207,6 +207,9 @@ pub(crate) async fn dispatch(st: &Arc<AppState>, cmd: &str, a: Args) -> Result<V
         "sync_unpair" => ok(encore_core::sync::sync_unpair().await?),
         "sync_now" => ok(encore_core::sync::sync_now().await?),
         "sync_set_active" => ok(encore_core::sync::sync_set_active(a.get("active")?).await?),
+        // "Playing on <device>" (presence.rs); `presence-changed` events
+        "presence_list" => ok(encore_core::sync::presence_list(st).await?),
+        "presence_send" => ok(encore_core::sync::presence_send(st, a.get("dev")?, a.get("cmd")?).await?),
 
         // ── library (local, no account) ──
         "lib_snapshot" => ok(library::lib_snapshot(st).await?),

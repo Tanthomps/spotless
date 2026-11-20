@@ -40,7 +40,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array><string>app.spotlessmusic.ios.downloads.*</string></array>
 	<key>UIBackgroundModes</key><array><string>audio</string><string>processing</string></array>
-	<key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string><key>UIImageName</key><string>LaunchMark2</string><key>UIImageRespectsSafeAreaInsets</key><true/></dict>
+	<key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string><key>UIImageName</key><string>LaunchMark3</string><key>UIImageRespectsSafeAreaInsets</key><true/></dict>
 	<key>UIStatusBarStyle</key><string>UIStatusBarStyleLightContent</string>
 	<key>UIUserInterfaceStyle</key><string>Dark</string>
 	<key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

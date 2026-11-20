@@ -28,7 +28,7 @@ struct EncoreApp: App {
 }
 
 /// stream: pod-fixes. The launch screen's own picture as the first SwiftUI frame: Info.plist's
-/// `UILaunchScreen` (the `LaunchBackground` colour, the `LaunchMark2` image at its 120 pt size,
+/// `UILaunchScreen` (the `LaunchBackground` colour, the `LaunchMark3` image at its 120 pt size,
 /// centred in the safe area), faded out once the UI under it is up. The hand-off is then a fade,
 /// not a cut to a different picture.
 private struct LaunchCover: View {
@@ -37,7 +37,7 @@ private struct LaunchCover: View {
         if shown {
             ZStack {
                 Color("LaunchBackground").ignoresSafeArea()
-                Image("LaunchMark2")
+                Image("LaunchMark3")
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)

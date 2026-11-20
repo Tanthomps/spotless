@@ -558,7 +558,6 @@ struct LibraryRow: View {
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @State private var chip = "All"
-    @State private var tint: UIColor?
 
     static let chips = ["All", "Music", "Podcasts", "Audiobooks"] // Audiobooks: stream audiobooks
 
@@ -646,15 +645,10 @@ struct HomeView: View {
             }
         }
         .foregroundStyle(Palette.text)
-        .background(alignment: .top) {
-            LinearGradient(colors: [tint?.surface(value: 0.35, maxSaturation: 0.6) ?? Palette.base, Palette.base], startPoint: .top, endPoint: .bottom)
-                .frame(height: 320).ignoresSafeArea()
-                .animation(.easeInOut(duration: 1), value: tint)
-        }
+        // Spotify's Home stays flat #121212 at the top; it never takes a cover's colour.
         .background(Palette.base)
         .chromeInset()
         .toolbar(.hidden, for: .navigationBar)
-        .artAccent(shelves.first?.items.first(where: { $0.thumbnail != nil })?.thumbnail, into: $tint)
         // The desktop's Home: load, reload on `home-changed` (a context switch, YouTube's shelves
         // arriving late, Made for you rebuilt, the network flipping), on coming back to the app,
         // and on pull-to-refresh. Starting a context moves its tile at once (`HomeStore.touch`).

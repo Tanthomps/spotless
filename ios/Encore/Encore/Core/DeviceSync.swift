@@ -60,6 +60,19 @@ struct SyncStatus: Codable, Hashable {
                                      lanPort: nil, pairing: nil, syncing: false, active: true)
 }
 
+/// Another linked device's now-playing (presence.rs): position `posMs` was read at `at` (ms).
+struct RemoteDevice: Codable, Equatable, Identifiable {
+    struct Song: Codable, Equatable { var videoId: String; var title: String; var artists: String; var thumbnail: String? }
+    var dev: String
+    var name: String
+    var platform: String?
+    var song: Song?
+    var playing: Bool
+    var posMs: Double?
+    var at: Double?
+    var id: String { dev }
+}
+
 // MARK: real core
 
 extension RealCoreClient {
@@ -72,6 +85,8 @@ extension RealCoreClient {
     func syncUnpair() async throws -> SyncStatus { try await call("sync_unpair") }
     func syncNow() async throws -> SyncStatus { try await call("sync_now") }
     func syncSetActive(_ active: Bool) async throws -> SyncStatus { try await call("sync_set_active", ["active": active]) }
+    func presenceList() async throws -> [RemoteDevice] { try await call("presence_list") }
+    func presenceSend(dev: String, cmd: String) async throws { let _: Data = try await call("presence_send", ["dev": dev, "cmd": cmd]) }
 }
 
 // MARK: mock
@@ -132,6 +147,9 @@ extension MockCoreClient {
         withLock { sync.status.active = active }
         return try await syncStatus()
     }
+
+    func presenceList() async throws -> [RemoteDevice] { [] }
+    func presenceSend(dev: String, cmd: String) async throws {}
 
     /// Linked with a Mac (tests and screenshots): `pending` changes waiting, and a last error.
     func mockSyncLink(pending: Int = 0, error: String? = nil, lastSyncAgo: Double = 5) {

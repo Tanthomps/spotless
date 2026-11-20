@@ -39,3 +39,13 @@ pub async fn sync_now() -> Result<Value, String> {
 pub async fn sync_set_active(active: bool) -> Result<Value, String> {
     sync::sync_set_active(active).await
 }
+
+#[tauri::command]
+pub async fn presence_list(state: crate::commands::St<'_>) -> Result<Value, String> {
+    sync::presence_list(&state).await
+}
+
+#[tauri::command]
+pub async fn presence_send(state: crate::commands::St<'_>, dev: String, cmd: String) -> Result<Value, String> {
+    sync::presence_send(&state, dev, cmd).await
+}

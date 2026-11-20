@@ -16,7 +16,7 @@ use tauri::{Manager, State};
 use crate::blocked::BlockedArtist;
 use crate::state::AppState;
 
-type St<'a> = State<'a, Arc<AppState>>;
+pub(crate) type St<'a> = State<'a, Arc<AppState>>;
 
 #[tauri::command]
 pub async fn set_volume(state: St<'_>, volume: i64) -> Result<(), String> {

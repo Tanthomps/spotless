@@ -218,6 +218,12 @@ struct BottomChrome: View {
                     .padding(.horizontal, Metrics.miniPlayerInset)
                     .transition(Motion.slide(.bottom, fade: true))
             }
+            // Another linked device is playing and this one isn't: Spotify's "Playing on <device>" bar.
+            if let r = app.devices.activeRemote, r.playing, !app.player.hasTrack || app.player.paused {
+                RemoteDeviceBar(device: r)
+                    .padding(.horizontal, Metrics.miniPlayerInset)
+                    .transition(Motion.slide(.bottom, fade: true))
+            }
             if app.player.hasTrack {
                 MiniPlayer().padding(.horizontal, Metrics.miniPlayerInset)
                     .transition(Motion.slide(.bottom, fade: true))
@@ -225,6 +231,7 @@ struct BottomChrome: View {
             TabBar()
         }
         .animation(Motion.spring, value: app.player.hasTrack)
+        .animation(Motion.spring, value: app.devices.activeRemote?.playing)
         .animation(Motion.spring, value: app.downloads.offline)
         .onChange(of: app.downloads.offline) { was, now in
             guard was != now else { return }
@@ -232,6 +239,100 @@ struct BottomChrome: View {
             UIAccessibility.post(notification: .announcement,
                                  argument: now ? OfflineBanner.text(offlineMode: app.downloads.snapshot.network.offlineMode) : "Back online")
         }
+    }
+}
+
+/// A linked device playing: its song and name in accent, play/pause and next sent to it. Tapping
+/// opens the controls with "Play here" (take the song over at its position).
+struct RemoteDeviceBar: View {
+    @Environment(AppModel.self) private var app
+    let device: RemoteDevice
+    @State private var open = false
+    var body: some View {
+        HStack(spacing: Space.m) {
+            ArtImage(url: device.song?.thumbnail, px: 120, radius: Radius.xs).frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(device.song?.title ?? "").font(Typo.font(13, .bold)).lineLimit(1)
+                HStack(spacing: 4) {
+                    Icon(name: "devices", size: 12)
+                    Text("Playing on \(device.name)").font(Typo.font(12, .medium)).lineLimit(1)
+                }
+                .foregroundStyle(Palette.accent)
+            }
+            Spacer(minLength: 0)
+            Button { app.devices.control(device, device.playing ? "pause" : "play") } label: {
+                IconSwap(name: device.playing ? "pause" : "play", fill: true, size: 22).frame(width: 40, height: 40)
+            }
+            .accessibilityLabel(device.playing ? "Pause on \(device.name)" : "Play on \(device.name)")
+            Button { app.devices.control(device, "next") } label: {
+                SkipGlyph(forward: true, size: 24).frame(width: 36, height: 40)
+            }
+            .accessibilityLabel("Next on \(device.name)")
+        }
+        .foregroundStyle(Palette.text)
+        .padding(.horizontal, Space.s).frame(height: 48)
+        .background(RoundedRectangle(cornerRadius: Radius.l, style: .continuous).fill(Color(hex: "#0f3a22")))
+        .contentShape(Rectangle())
+        .onTapGesture { open = true }
+        .accessibilityIdentifier("remote-device-bar")
+        .sheet(isPresented: $open) {
+            RemoteDeviceSheet(device: device).environment(app)
+                .presentationDetents([.height(300)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground { SheetGlass() }
+                .presentationCornerRadius(Radius.glassSheet)
+        }
+    }
+}
+
+/// The other device's controls, and "Play here": this phone picks the song up where it is.
+struct RemoteDeviceSheet: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    let device: RemoteDevice
+    var body: some View {
+        let live = app.devices.remotes.first { $0.dev == device.dev } ?? device
+        VStack(spacing: Space.l) {
+            HStack(spacing: Space.m) {
+                ArtImage(url: live.song?.thumbnail, px: 200, radius: Radius.s).frame(width: 56, height: 56)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(live.song?.title ?? "").font(Typo.font(16, .bold)).lineLimit(1)
+                    Text(live.song?.artists ?? "").font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(1)
+                    Text("Playing on \(live.name)").font(Typo.font(13, .semibold)).foregroundStyle(Palette.accent).lineLimit(1)
+                }
+                Spacer()
+            }
+            HStack(spacing: Space.xxl) {
+                Button { app.devices.control(live, "prev") } label: { SkipGlyph(forward: false, size: 32) }
+                    .accessibilityLabel("Previous")
+                PlayCircleButton(playing: live.playing, size: 56, color: .white) { app.devices.control(live, live.playing ? "pause" : "play") }
+                Button { app.devices.control(live, "next") } label: { SkipGlyph(forward: true, size: 32) }
+                    .accessibilityLabel("Next")
+            }
+            .foregroundStyle(Palette.text)
+            Button {
+                playHere(live)
+            } label: {
+                Text("Play on this iPhone").font(Typo.font(15, .bold)).foregroundStyle(.black)
+                    .frame(maxWidth: .infinity).frame(height: 48)
+                    .background(Capsule().fill(Palette.accent))
+            }
+            .buttonStyle(PressScale())
+            .accessibilityIdentifier("remote-play-here")
+        }
+        .padding(Space.xl)
+        .foregroundStyle(Palette.text)
+    }
+
+    /// Take over: the same song here, at the other device's position now, and pause it there.
+    private func playHere(_ d: RemoteDevice) {
+        guard let s = d.song else { return }
+        let elapsed = d.playing ? max(0, Date().timeIntervalSince1970 * 1000 - (d.at ?? 0)) : 0
+        let pos = ((d.posMs ?? 0) + elapsed) / 1000
+        let song = SongItem(videoId: s.videoId, title: s.title, artists: s.artists, thumbnail: s.thumbnail)
+        app.player.play([song], at: 0, context: PlayContext(kind: .song, id: s.videoId, title: s.title), startSecs: pos)
+        app.devices.control(d, "pause")
+        dismiss()
     }
 }
 

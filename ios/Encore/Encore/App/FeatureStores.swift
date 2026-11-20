@@ -17,10 +17,17 @@ final class PodcastStore {
 
     init(core: CoreClient) { self.core = core; actions = CoreActions(core: core) }
 
+    /// The episode lists have answered once (until then they show placeholders, not "empty").
+    var listsLoaded = false
+    /// The first read of the episode lists failed (they show Try again instead of "empty").
+    var listsFailed = false
+
     func refresh() async {
         // A failed read keeps what was there: an empty list would read as "you follow nothing".
         if let v = try? await core.podcastFollows() { follows = v }
-        if let v = try? await core.podcastSavedEpisodes() { saved = v }
+        do { saved = try await core.podcastSavedEpisodes(); listsLoaded = true; listsFailed = false } catch {
+            if !listsLoaded && !FriendlyError.isCancellation(error) { listsFailed = true }
+        }
         if let v = try? await core.podcastNewEpisodes(limit: 20) { newEpisodes = v }
         if let v = try? await core.podcastContinueListening(limit: 10) { continueListening = v }
     }
@@ -143,11 +150,12 @@ final class DownloadStore {
     func isCollectionDownloaded(_ id: String) -> Bool { snapshot.collections.contains { $0.id == id } }
 
     /// `then`: after the core took it (an episode is then in Your Episodes too).
-    func add(_ c: DownloadCollection, songs: [SongItem]? = nil, then: (@MainActor () async -> Void)? = nil) {
+    @discardableResult
+    func add(_ c: DownloadCollection, songs: [SongItem]? = nil, then: (@MainActor () async -> Void)? = nil) -> Task<Bool, Never> {
         let before = snapshot.collections
         snapshot.collections.append(DownloadCollectionStatus(id: c.id, kind: c.kind, title: c.title, subtitle: c.subtitle, thumbnail: c.thumbnail,
                                                              total: songs?.count ?? 1, done: 0, failed: 0, bytes: 0, addedAt: Date().timeIntervalSince1970))
-        actions.run("download", "Couldn't download this", revert: { [weak self] in self?.snapshot.collections = before }) { [weak self, core] in
+        return actions.run("download", "Couldn't download this", revert: { [weak self] in self?.snapshot.collections = before }) { [weak self, core] in
             try await core.downloadsAdd(c, songs: songs)
             await self?.refresh()
             await then?()
@@ -163,7 +171,8 @@ final class DownloadStore {
         }
     }
 
-    func removeAll() {
+    @discardableResult
+    func removeAll() -> Task<Bool, Never> {
         actions.run("download", "Couldn't remove your downloads") { [weak self, core] in
             try await core.downloadsRemoveAll()
             await self?.refresh()
@@ -182,8 +191,18 @@ final class DownloadStore {
     /// Total failed songs (Settings › Storage can offer Retry with `DownloadsRetryRow`).
     var failedCount: Int { snapshot.failed }
 
-    func set(_ patch: DownloadSettingsPatch) {
-        actions.run("downloadSettings", "Couldn't change that setting") { [weak self, core] in
+    /// Why downloads in flight aren't moving (nil: they are), for the ring's paused look and label.
+    var pausedReason: String? {
+        let n = snapshot.network
+        guard n.paused || (n.offline && snapshot.queued > 0) else { return nil }
+        if !n.online || n.offline { return "Paused while offline" }
+        if n.metered && !n.allowMetered { return "Waiting for Wi-Fi" }
+        return "Paused"
+    }
+
+    /// `revert`: undo the switch the caller flipped optimistically if the core refuses.
+    func set(_ patch: DownloadSettingsPatch, revert: (@MainActor () -> Void)? = nil) {
+        actions.run("downloadSettings", "Couldn't change that setting", revert: revert) { [weak self, core] in
             let s = try await core.downloadsSetSettings(patch)
             guard let self else { return }
             self.snapshot = s; self.done = Set(s.done); self.noteOffline()

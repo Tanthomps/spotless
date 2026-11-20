@@ -14,7 +14,7 @@ struct NPVideoSwitch: View {
         let on = video.side
         Button { video.pick(!on) } label: {
             HStack(spacing: 6) {
-                Icon(name: on ? "music-note" : "monitor-play", size: 16)
+                IconSwap(name: on ? "music-note" : "monitor-play", size: 16)
                 Text(on ? "Switch to audio" : "Switch to video").font(Typo.font(13, .bold))
             }
             .foregroundStyle(Palette.text)
@@ -148,7 +148,7 @@ struct VideoFullscreen: View {
                 Spacer()
                 HStack(spacing: 64) {
                     if episode {
-                        Button { poke(); Task { try? await app.core.seekRelative(-15) } } label: { SkipSeconds(forward: false) }
+                        Button { poke(); app.player.seekBy(-15) } label: { SkipSeconds(forward: false) }
                             .accessibilityLabel("Back 15 seconds")
                     } else {
                         Button { poke(); p.skipPrevious() } label: { Icon(name: "skip-back", fill: true, size: 32).frame(width: 52, height: 52) }
@@ -157,7 +157,7 @@ struct VideoFullscreen: View {
                     PlayCircleButton(playing: !p.paused, size: Metrics.npPlayButton, color: .white, loading: p.loading) { poke(); p.togglePause() }
                         .accessibilityIdentifier("np-video-play")
                     if episode {
-                        Button { poke(); Task { try? await app.core.seekRelative(15) } } label: { SkipSeconds(forward: true) }
+                        Button { poke(); app.player.seekBy(15) } label: { SkipSeconds(forward: true) }
                             .accessibilityLabel("Forward 15 seconds")
                     } else {
                         Button { poke(); p.skipNext() } label: { Icon(name: "skip-forward", fill: true, size: 32).frame(width: 52, height: 52) }

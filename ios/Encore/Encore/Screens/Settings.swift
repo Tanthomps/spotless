@@ -225,7 +225,7 @@ struct SideMenu: View {
                             withAnimation(Motion.spring) { dx = 0 }
                         })
             }
-            .animation(Motion.spring, value: open)
+            .animation(open ? Motion.spring : Motion.exit, value: open)
         }
         .allowsHitTesting(open)
         .accessibilityHidden(!open)
@@ -277,7 +277,7 @@ struct SideMenu: View {
         close()
     }
 
-    private func close() { withAnimation(Motion.spring) { app.router.sideMenuOpen = false } }
+    private func close() { withAnimation(Motion.exit) { app.router.sideMenuOpen = false } }
 }
 
 // MARK: sleep timer

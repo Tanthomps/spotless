@@ -95,6 +95,8 @@ final class PlayerStore {
         position = t
         actions.run("seek", "Couldn't jump to that point", revert: { [weak self] in self?.position = was }) { [core] in try await core.seek(position: t) }
     }
+    /// ±15 s on episodes and videos: a failure says so.
+    func seekBy(_ secs: Double) { actions.run("seek", "Couldn't skip \(secs < 0 ? "back" : "ahead")") { [core] in _ = try await core.seekRelative(secs) } }
     func toggleShuffle() { actions.run("shuffle", "Couldn't change shuffle") { [core] in try await core.toggleShuffle() } }
     func cycleRepeat() {
         let next: RepeatMode = switch repeatMode { case .off: .all; case .all: .one; case .one: .off }
@@ -165,8 +167,17 @@ final class LibraryStore {
         return max(secs(snapshot.lastPlayed[id] ?? 0), secs(snapshot.lastTouched?[id] ?? 0), secs(base), touches[id] ?? 0)
     }
 
+    /// The first snapshot has arrived (until then Your Library shows placeholders, not "empty").
+    var loaded = false
+    /// The first snapshot failed: Your Library says so with Try again (a later failure keeps what's shown).
+    var failed = false
     func refresh() async {
-        if let s = try? await core.librarySnapshot() { snapshot = s; likedIds = Set(s.likedIds) }
+        do {
+            let s = try await core.librarySnapshot()
+            snapshot = s; likedIds = Set(s.likedIds); loaded = true; failed = false
+        } catch {
+            if !FriendlyError.isCancellation(error) && !loaded { failed = true }
+        }
         if let r = try? await core.recentContexts(limit: 50) { recents = r }
     }
 
@@ -531,12 +542,12 @@ final class AppModel {
     }
 
     func showToast(_ text: String, action: String? = nil, run: (@MainActor () -> Void)? = nil) {
-        withAnimation(Motion.spring) { toast = ToastMessage(text: text, action: action, run: run) }
+        withAnimation(Motion.land) { toast = ToastMessage(text: text, action: action, run: run) }
         toastTask?.cancel()
         toastTask = Task {
             try? await Task.sleep(nanoseconds: run == nil ? 3_000_000_000 : 5_000_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(Motion.quick) { toast = nil }
+            withAnimation(Motion.exit) { toast = nil }
         }
     }
 

@@ -50,11 +50,13 @@ struct DevicesSection: View {
                 }
                 HStack(spacing: Space.s) {
                     if s.paired {
-                        DevicePill(title: s.syncing ? "Syncing…" : "Sync now", style: .light, busy: s.syncing) { d.syncNow() }
+                        DevicePill(title: s.syncing ? "Syncing…" : "Sync now", style: .light, busy: s.syncing) { d.syncNow { app.fail($0) } }
                             .accessibilityIdentifier("devices-sync-now")
                         DevicePill(title: "Unlink", style: .outline) {
                             app.confirm = ConfirmRequest(title: DeviceSyncText.unlinkTitle(s.peers), message: DeviceSyncText.unlinkMessage,
-                                                         action: "Unlink") { d.unlink() }
+                                                         action: "Unlink") {
+                                d.unlink(done: { app.showToast("Unlinked") }, fail: { app.fail($0) })
+                            }
                         }
                         .accessibilityIdentifier("devices-unlink")
                     } else {

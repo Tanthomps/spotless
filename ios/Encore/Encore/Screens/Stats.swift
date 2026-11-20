@@ -163,6 +163,7 @@ struct StatsView: View {
             let songs = topSongs(s)
             ForEach(Array(songs.prefix(allTracks ? songs.count : 4).enumerated()), id: \.offset) { i, song in
                 TrackRow(song: song, index: i + 1, showPlays: true, context: context) { playTop(at: i) }
+                    .transition(Motion.reveal)
             }
         }
         if !s.topAlbums.isEmpty {
@@ -285,7 +286,11 @@ struct StatsView: View {
             stats = s; shown = r; failed = false
             await loadPhotos(s.topArtists)
         } catch where !FriendlyError.isCancellation(error) {
-            if stats == nil { failed = true }
+            if stats == nil { failed = true } else {
+                // The chip goes back to the range still on screen, and says why.
+                range = shown
+                app.fail(friendlyError(error, "Couldn't load \(r.phrase)"))
+            }
         } catch {}
     }
 

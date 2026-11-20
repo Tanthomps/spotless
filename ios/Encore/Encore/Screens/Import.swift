@@ -53,6 +53,9 @@ final class ImportFlow {
     /// `import_cancel` in flight (the Cancel button shows a spinner and can't be pressed twice).
     var cancelling = false
     private var polling = false
+    private var watching = false
+    /// Status calls failing in a row while the progress step polls (the step says so after a few).
+    private var pollFailures = 0
 
     /// Uncertain first, then not found, then (once asked for) the matched ones.
     var rows: [ImportRow] { ["check", "missing", "matched"].flatMap { tiers[$0] ?? [] } }
@@ -83,17 +86,27 @@ final class ImportFlow {
         guard !links.isEmpty else { return }
         busy = true; error = nil
         defer { busy = false }
-        do {
-            var merged: ImportPreview?
-            for l in links {
+        var merged: ImportPreview?
+        var bad: [String] = []
+        var lastError: Error?
+        for l in links {
+            do {
                 let p = try await app.core.importRead(link: l)
                 if var m = merged { m.lists += p.lists; m.profile = m.profile ?? p.profile; merged = m } else { merged = p }
+            } catch {
+                errorLog.error("import read: \(FriendlyError.raw(error), privacy: .public)")
+                bad.append(l); lastError = error
             }
+        }
+        if let merged, !merged.lists.isEmpty {
             show(merged)
-        } catch {
-            errorLog.error("import read: \(FriendlyError.raw(error), privacy: .public)")
-            self.error = FriendlyError.isUnreachable(FriendlyError.raw(error)) ? FriendlyError.words.unreachable
+            // Some links worked: carry on with those and name the ones that didn't.
+            if !bad.isEmpty { self.error = bad.count == 1 ? "This link didn't work and was skipped: \(bad[0])" : "\(bad.count) links didn't work and were skipped." }
+        } else if let lastError {
+            self.error = FriendlyError.isUnreachable(FriendlyError.raw(lastError)) ? FriendlyError.words.unreachable
                 : "That link didn't work. In Spotify, use Share › Copy link."
+        } else {
+            self.error = "No public playlists there. Try a playlist link, or use your Spotify data file."
         }
     }
 
@@ -110,17 +123,70 @@ final class ImportFlow {
 
     private func show(_ p: ImportPreview?) {
         guard let p else { return }
+        guard !p.lists.isEmpty else {
+            error = "No public playlists there. Try a playlist link, or use your Spotify data file."
+            return
+        }
         preview = p
         picked = Set(p.lists.indices)
         go(.preview)
     }
 
     func start(_ app: AppModel) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
         do {
             snapshot = try await app.core.importStart(lists: picked.sorted())
             go(.progress)
         } catch {
             self.error = friendlyError(error, "The import couldn't start")
+        }
+    }
+
+    /// Opening the import again (after Hide, or after the app was closed mid-import): pick up the
+    /// job the core is still running, or its review, instead of starting at Welcome.
+    func resume(_ app: AppModel) async {
+        guard step == .welcome, snapshot == nil, let s = try? await app.core.importStatus() else { return }
+        switch s.phase {
+        case "review":
+            snapshot = s
+            await openReview(app)
+        case "done", "failed", "cancelled", "idle", "":
+            return
+        default:
+            snapshot = s
+            go(.progress)
+        }
+    }
+
+    /// After Hide: keep an eye on the job and say when it needs you (or finished).
+    func watchHidden(_ app: AppModel) {
+        guard !watching else { return }
+        watching = true
+        Task {
+            defer { watching = false }
+            while !app.importOpen {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !app.importOpen, let s = try? await app.core.importStatus() else { continue }
+                snapshot = s
+                switch s.phase {
+                case "review":
+                    if step == .progress { await openReview(app) }
+                    app.showToast("Your import is ready to review", action: "Review") { app.importOpen = true }
+                    return
+                case "done":
+                    if step == .progress { go(.done) }
+                    app.showToast("Import finished", action: "View") { app.importOpen = true }
+                    return
+                case "failed":
+                    if step == .progress { go(.done) }
+                    app.showToast("The import stopped", action: "View") { app.importOpen = true }
+                    return
+                case "cancelled": return
+                default: continue
+                }
+            }
         }
     }
 
@@ -148,7 +214,17 @@ final class ImportFlow {
         polling = true
         defer { polling = false }
         while live && step == .progress && !Task.isCancelled {
-            if let s = try? await app.core.importStatus(), live, step == .progress {
+            var got: ImportSnapshot?
+            var callFailed = false
+            do { got = try await app.core.importStatus() } catch { callFailed = !FriendlyError.isCancellation(error) }
+            if callFailed {
+                pollFailures += 1
+                if pollFailures == 10 { error = "Lost touch with the import. Check your connection; it keeps going." }
+            } else if pollFailures > 0 {
+                pollFailures = 0
+                error = nil
+            }
+            if let s = got, live, step == .progress {
                 snapshot = s
                 // Matching finished: the review step, where picks can change before anything is
                 // written (`create`). Links asking for `step=done` take the best picks straight away.
@@ -304,6 +380,7 @@ struct SafariPage: UIViewControllerRepresentable {
 struct ImportOnboarding: View {
     @Environment(AppModel.self) private var app
     @State private var flow = ImportFlow.shared
+    @State private var confirmClose = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -328,6 +405,13 @@ struct ImportOnboarding: View {
         .preferredColorScheme(.dark)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("import")
+        .task { await flow.resume(app) }
+        .confirmationDialog("Finish later?", isPresented: $confirmClose, titleVisibility: .visible) {
+            Button("Close") { finish(toLibrary: false) }
+            Button("Keep reviewing", role: .cancel) {}
+        } message: {
+            Text("Your matches are kept. Open Import in Settings to finish.")
+        }
     }
 
     /// Back on the left where there is a way back; a close X on the review summary ("later": the
@@ -341,7 +425,7 @@ struct ImportOnboarding: View {
             }
             Spacer()
             if flow.step == .review {
-                Button { finish(toLibrary: false) } label: { Icon(name: "x", size: 22).frame(width: 44, height: 44) }
+                Button { confirmClose = true } label: { Icon(name: "x", size: 22).frame(width: 44, height: 44) }
                     .accessibilityLabel("Close")
                     .accessibilityIdentifier("import-close")
             }
@@ -601,7 +685,7 @@ private struct ImportPreviewStep: View {
         StepLayout {
             if lists.count == 1 { single(lists[0]) } else { many(lists) }
         } footer: {
-            OnboardPrimaryButton(title: buttonTitle, enabled: !flow.picked.isEmpty) { Task { await flow.start(app) } }
+            OnboardPrimaryButton(title: buttonTitle, busy: flow.busy, enabled: !flow.picked.isEmpty && !flow.busy) { Task { await flow.start(app) } }
                 .accessibilityIdentifier("import-start")
         }
     }
@@ -689,7 +773,7 @@ private struct ImportPreviewStep: View {
                 Text(subtitle(l)).font(Typo.rowSubtitle).foregroundStyle(Palette.subdued).lineLimit(1)
             }
             Spacer(minLength: 0)
-            Icon(name: on ? "check-circle" : "plus-circle", fill: on, size: 26).foregroundStyle(on ? Palette.accent : Palette.dim)
+            IconSwap(name: on ? "check-circle" : "plus-circle", fill: on, size: 26).foregroundStyle(on ? Palette.accent : Palette.dim)
         }
         .padding(.horizontal, Space.xl)
         .frame(height: Metrics.rowHeight)
@@ -767,7 +851,7 @@ private struct ImportProgressStep: View {
                     .accessibilityIdentifier("import-error")
                     .padding(.bottom, Space.s)
             }
-            OnboardSecondaryButton(title: "Hide") { app.importOpen = false }
+            OnboardSecondaryButton(title: "Hide") { app.importOpen = false; flow.watchHidden(app) }
                 .accessibilityIdentifier("import-hide")
             // Not while the songs are being written: stopping halfway would leave half a playlist.
             if !creating {
@@ -806,14 +890,16 @@ private struct ImportDoneStep: View {
         let s = flow.snapshot
         let results = s?.results ?? []
         let failed = s?.phase == "failed" || s?.phase == "cancelled"
+        let broke = s?.phase == "failed"
         // Listening history isn't a playlist: its plays go to Recently played and the taste profile.
         let added = results.filter { $0.kind != "history" }.reduce(0) { $0 + $1.added }
         StepLayout {
             VStack(spacing: Space.l) {
                 Icon(name: failed ? "info" : "seal-check", fill: true, size: 64).foregroundStyle(failed ? Palette.subdued : Palette.accent)
                     .padding(.top, Space.xl)
-                OnboardHeader(title: failed ? "The import stopped" : "You're all set",
-                              line: failed ? "Songs found so far are remembered. Try again from Settings."
+                OnboardHeader(title: broke ? "The import didn't finish" : failed ? "You stopped the import" : "You're all set",
+                              line: broke ? "Something went wrong while matching. Songs found so far are remembered, so trying again is quicker."
+                                  : failed ? "Songs found so far are remembered. Start it again any time from Settings."
                                   : added > 0 ? "\(added.formatted()) song\(added == 1 ? "" : "s") are in Your Library." : "Your library is up to date.",
                               center: true)
                 VStack(spacing: 0) {
@@ -836,8 +922,14 @@ private struct ImportDoneStep: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("import-done")
         } footer: {
-            OnboardPrimaryButton(title: "Go to Your Library") { finish(true) }
-                .accessibilityIdentifier("import-go-library")
+            if broke {
+                OnboardPrimaryButton(title: "Try again") { flow.reset() }
+                    .accessibilityIdentifier("import-try-again")
+                OnboardTextButton(title: "Go to Your Library") { finish(true) }
+            } else {
+                OnboardPrimaryButton(title: "Go to Your Library") { finish(true) }
+                    .accessibilityIdentifier("import-go-library")
+            }
         }
     }
 }

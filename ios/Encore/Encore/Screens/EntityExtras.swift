@@ -110,7 +110,7 @@ struct RecommendedSection: View {
             }
             .padding(.horizontal, Space.gutter).padding(.top, Space.xxl).padding(.bottom, Space.s)
             if loading && recs.isEmpty {
-                ProgressView().tint(Palette.subdued).frame(maxWidth: .infinity).frame(height: 120)
+                SkeletonRows(count: 3)
             }
             ForEach(Array(recs.enumerated()), id: \.element.song.videoId) { i, r in
                 RecommendedRow(rec: r, onAdd: { onAdd(r) }) {

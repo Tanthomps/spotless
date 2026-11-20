@@ -151,6 +151,7 @@ enum NameSheetKind: Equatable {
     case playlist, folder
     /// Rename an existing folder (the field starts with its name; the button says Save).
     case renameFolder(id: String, current: String)
+    var isPlaylist: Bool { self == .playlist }
 }
 
 /// Full-height naming screen: centred prompt, a large underlined field, Cancel and an accent Create.
@@ -160,6 +161,7 @@ struct NameSheet: View {
     let kind: NameSheetKind
     @State private var name = ""
     @FocusState private var focused: Bool
+    @State private var busy = false
 
     var body: some View {
         VStack(spacing: Space.xl) {
@@ -182,10 +184,15 @@ struct NameSheet: View {
                         .overlay(Capsule().stroke(Palette.dim, lineWidth: 1))
                 }
                 Button(action: create) {
-                    Text(isRename ? "Save" : "Create").font(Typo.font(15, .bold)).lineLimit(1).fixedSize().foregroundStyle(.black)
+                    ZStack {
+                        Text(isRename ? "Save" : "Create").opacity(busy ? 0 : 1)
+                        if busy { ProgressView().controlSize(.small).tint(.black) }
+                    }
+                    .font(Typo.font(15, .bold)).lineLimit(1).fixedSize().foregroundStyle(.black)
                         .padding(.horizontal, 28).frame(height: 44)
                         .background(Capsule().fill(Palette.accent))
                 }
+                .disabled(busy)
                 .accessibilityIdentifier("name-create")
             }
             .buttonStyle(PressScale())
@@ -214,22 +221,30 @@ struct NameSheet: View {
         }
     }
 
+    /// The sheet stays open until the item exists: a failure keeps the typed name and says why.
     private func create() {
         let n = name.trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty else { return }
-        dismiss()
+        guard !n.isEmpty, !busy else { return }
         if case .renameFolder(let id, let current) = kind {
+            dismiss()
             if n != current { Task { await FolderActions.rename(id: id, to: n, app: app) } }
             return
         }
+        busy = true
         Task {
-            let route: Route?
-            switch kind {
-            case .playlist: route = (try? await app.core.createPlaylist(name: n)).map { .playlist($0.id) }
-            case .folder, .renameFolder: route = (try? await app.core.createFolder(name: n)).map { .folder($0.id) }
+            defer { busy = false }
+            let route: Route
+            do {
+                switch kind {
+                case .playlist: route = .playlist(try await app.core.createPlaylist(name: n).id)
+                case .folder, .renameFolder: route = .folder(try await app.core.createFolder(name: n).id)
+                }
+            } catch {
+                app.fail(friendlyError(error, kind.isPlaylist ? "Couldn't create the playlist" : "Couldn't create the folder"))
+                return
             }
+            dismiss()
             await app.library.refresh()
-            guard let route else { return }
             app.router.dismissOverlays()
             app.router.tab = .library
             app.router.paths[.library] = [route]

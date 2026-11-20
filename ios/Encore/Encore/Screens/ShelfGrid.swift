@@ -10,6 +10,10 @@ struct ShelfGridView: View {
     let title: String
     /// A podcast category (`podcat:<genre>`): its shows, from the core (`podcast_category`).
     @State private var category: [ShelfItem]?
+    @State private var failed = false
+    @State private var attempt = 0
+    /// A category page (podcasts, audiobook genre) fetched from the core, not read from Home.
+    private var fetched: Bool { id.hasPrefix("podcat:") || Self.audiobookGenre(id) != nil }
 
     private var items: [ShelfItem] {
         if let category { return category }
@@ -35,7 +39,8 @@ struct ShelfGridView: View {
                         ForEach(list) { it in
                             Button { tap(it, in: list) } label: {
                                 MediaCard(title: it.title, subtitle: it.subtitle, thumbnail: it.thumbnail, circle: it.kind == "artist",
-                                          size: card, liked: it.kind == "liked" || HomeStore.key(it.id) == likedPlaylistId)
+                                          size: card, liked: it.kind == "liked" || HomeStore.key(it.id) == likedPlaylistId,
+                                          fallback: ArtRef(id: it.id, title: it.title))
                                     .frame(width: card, alignment: it.kind == "artist" ? .center : .leading)
                             }
                             .buttonStyle(PressScale())
@@ -49,7 +54,9 @@ struct ShelfGridView: View {
                     }
                     .padding(.horizontal, Space.gutter)
                     .padding(.top, Space.s)
-                    if list.isEmpty {
+                    if fetched && category == nil {
+                        EntityLoadState(failed: failed) { failed = false; attempt += 1 }
+                    } else if list.isEmpty {
                         Text("Nothing here right now").font(Typo.font(16, .bold)).padding(.top, 60)
                     }
                 }
@@ -61,17 +68,21 @@ struct ShelfGridView: View {
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("shelf-grid")
-        .task {
+        .task(id: attempt) {
             // stream: audiobooks — a genre tile (`abgenre:<subject>`) or an audiobook shelf's
             // Show all: that genre's whole list (`audiobook_genre`).
-            if let genre = Self.audiobookGenre(id) {
-                category = (try? await app.core.audiobookGenre(genre: genre))?.map {
-                    ShelfItem(kind: "audiobook", id: $0.id, title: $0.title, subtitle: $0.author, thumbnail: $0.thumbnail, explicit: false)
-                } ?? []
-                return
+            do {
+                if let genre = Self.audiobookGenre(id) {
+                    category = try await app.core.audiobookGenre(genre: genre).map {
+                        ShelfItem(kind: "audiobook", id: $0.id, title: $0.title, subtitle: $0.author, thumbnail: $0.thumbnail, explicit: false)
+                    }
+                    return
+                }
+                guard id.hasPrefix("podcat:") else { return }
+                category = try await app.core.podcastCategory(genre: String(id.dropFirst("podcat:".count)))
+            } catch {
+                if !FriendlyError.isCancellation(error) { failed = true }
             }
-            guard id.hasPrefix("podcat:") else { return }
-            category = (try? await app.core.podcastCategory(genre: String(id.dropFirst("podcat:".count)))) ?? []
         }
     }
 

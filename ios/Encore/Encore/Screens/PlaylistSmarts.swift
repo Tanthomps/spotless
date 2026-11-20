@@ -26,6 +26,10 @@ final class PlaylistSmarts {
     // paging
     var continuation: String?
     var loadingMore = false
+    /// The next page (or finding it) failed: the list ends in "Couldn't load more songs · Try again".
+    var moreFailed = false
+    /// Suggestions being added right now (a second tap on + does nothing).
+    var keeping: Set<String> = []
 
     /// Enhance mixes in one suggestion after every 2 songs (the core's `interleave`).
     nonisolated static let enhanceEvery = 2
@@ -104,6 +108,9 @@ final class PlaylistSmarts {
 
     /// + on a suggestion: it joins the playlist (Liked Songs: it is liked) and stops being a suggestion.
     func keep(_ app: AppModel, id: String, song: SongItem, liked: Bool, title: String) async {
+        guard !keeping.contains(song.videoId) else { return }
+        keeping.insert(song.videoId)
+        defer { keeping.remove(song.videoId) }
         do {
             if liked { app.toggleLike(song) } else { try await app.core.addToPlaylist(id: id, songs: [song]) }
             enhance = try await app.core.enhanceKeep(playlistId: id, videoId: song.videoId)
@@ -115,12 +122,17 @@ final class PlaylistSmarts {
 
     /// − on a suggestion: "not for me" (a taste signal), and it leaves.
     func remove(_ app: AppModel, id: String, song: SongItem) async {
-        if let e = try? await app.core.enhanceRemove(playlistId: id, videoId: song.videoId) { enhance = e }
+        do { enhance = try await app.core.enhanceRemove(playlistId: id, videoId: song.videoId) } catch {
+            app.fail(friendlyError(error, "Couldn't remove that suggestion"))
+        }
     }
 
     /// A long YouTube playlist: find the first page's continuation (only worth asking once the page is full).
     func loadContinuation(_ app: AppModel, id: String, count: Int) async {
-        continuation = count >= 100 ? (try? await app.core.playlistContinuation(id: id)) ?? nil : nil
+        guard count >= 100 else { continuation = nil; return }
+        do { continuation = try await app.core.playlistContinuation(id: id); moreFailed = false } catch {
+            if !FriendlyError.isCancellation(error) { moreFailed = true }
+        }
     }
 
     /// The next page, appended to `items`.
@@ -128,7 +140,11 @@ final class PlaylistSmarts {
         guard let token = continuation, !loadingMore else { return }
         loadingMore = true
         defer { loadingMore = false }
-        guard let more = try? await app.core.playlistMore(token: token) else { return }
+        let more: PlaylistMore
+        do { more = try await app.core.playlistMore(token: token); moreFailed = false } catch {
+            if !FriendlyError.isCancellation(error) { moreFailed = true }
+            return
+        }
         let have = Set(items.map(\.videoId))
         items += more.items.filter { !have.contains($0.videoId) }
         continuation = more.continuation

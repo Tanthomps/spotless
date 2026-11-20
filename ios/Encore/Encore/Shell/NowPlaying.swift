@@ -4,6 +4,8 @@
 import SwiftUI
 
 struct NowPlayingCover: View {
+    static let openAnimation = Animation.spring(response: 0.42, dampingFraction: 0.9)
+    static let closeAnimation = Animation.spring(response: 0.34, dampingFraction: 0.9)
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drag: CGFloat = 0
@@ -20,6 +22,7 @@ struct NowPlayingCover: View {
                 if app.player.hasTrack {
                     NowPlayingView(drag: $drag, screenHeight: h, insets: geo.safeAreaInsets)
                         .opacity(fullscreen ? 0 : 1)
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { ArtFlight.shared.npSheetY = $0 }
                 }
                 if fullscreen { VideoFullscreen() }
             }
@@ -28,9 +31,11 @@ struct NowPlayingCover: View {
             // Reduce Motion: Now Playing fades in place instead of sliding up.
             .offset(y: open ? max(0, drag) : (reduceMotion ? 0 : h))
             .opacity(reduceMotion && !open ? 0 : 1)
-            .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.42, dampingFraction: 0.9), value: open)
+            // Closing is quicker than opening (0.8x).
+            .animation(reduceMotion ? .easeInOut(duration: 0.2) : open ? Self.openAnimation : Self.closeAnimation, value: open)
             .ignoresSafeArea()
         }
+        .onChange(of: drag) { _, d in ArtFlight.shared.drag = d }
         .allowsHitTesting(app.router.nowPlayingOpen)
         .accessibilityHidden(!app.router.nowPlayingOpen)
         .onAppear { VideoStore.shared.attach(app) }
@@ -55,6 +60,7 @@ struct NowPlayingView: View {
     /// Small dark pill over the controls ("Smart Shuffle is on").
     @State private var pill: String?
     @State private var pillTask: Task<Void, Never>?
+    @State private var savingEpisode = false
 
     private var player: PlayerStore { app.player }
     private var bg: Color { accent?.surface(value: 0.5, maxSaturation: 0.7) ?? Color(hex: "#404040") }
@@ -165,7 +171,7 @@ struct NowPlayingView: View {
                             .padding(.horizontal, 12).frame(height: 30)
                             .background(Capsule().fill(Color(hex: "#2a2a2a")))
                             .offset(y: -40)
-                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                            .transition(Motion.pop)
                             .accessibilityIdentifier("np-pill")
                     }
                 }
@@ -275,24 +281,31 @@ struct NowPlayingView: View {
                 // Episodes: + saves to Your Episodes (not Liked Songs).
                 let saved = app.podcasts.saved.contains { $0.id == s.videoId }
                 Button {
+                    guard !savingEpisode else { return }
+                    savingEpisode = true
                     Task {
-                        guard let e = try? await app.core.podcastEpisode(id: s.videoId) else { return }
+                        defer { savingEpisode = false }
+                        let e: PodcastEpisode
+                        do { e = try await app.core.podcastEpisode(id: s.videoId) } catch {
+                            app.fail(friendlyError(error, saved ? "Couldn't remove this episode" : "Couldn't save this episode"))
+                            return
+                        }
                         let on = app.podcasts.toggleSaved(e)
                         Haptics.impact(.light)
                         app.showToast(on ? "Added to Your Episodes" : "Removed from Your Episodes")
                     }
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 28)
-                        .foregroundStyle(saved ? Palette.accent : Palette.text)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 28)
+                        .foregroundStyle(saved ? Palette.accent : Palette.text).pulse(on: saved)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Episodes" : "Add to Your Episodes")
                 .accessibilityIdentifier("np-like")
             } else if let s = song {
                 let liked = app.library.isLiked(s.videoId)
                 Button { app.likeButton(s) } label: {
-                    Icon(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 28)
+                    IconSwap(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 28)
                         .foregroundStyle(liked ? Palette.accent : Palette.text)
-                        .symbolEffect(.bounce, value: liked)
+                        .pulse(on: liked)
                 }
                 .accessibilityLabel(liked ? "Saved in Liked Songs" : "Add to Liked Songs")
                     .accessibilityHint(liked ? "Opens Add to playlist" : "")
@@ -345,14 +358,14 @@ struct NowPlayingView: View {
             .accessibilityLabel("Playback speed \(speedLabel(app.settings.speed))")
             .accessibilityIdentifier("np-speed")
             Spacer()
-            Button { Task { try? await app.core.seekRelative(-15) } } label: { SkipSeconds(forward: false) }
+            Button { app.player.seekBy(-15) } label: { SkipSeconds(forward: false) }
                 .accessibilityLabel("Back 15 seconds")
                 .accessibilityIdentifier("np-back15")
             Spacer()
             PlayCircleButton(playing: !player.paused, size: Metrics.npPlayButton, color: .white, loading: player.loading) { player.togglePause() }
                 .accessibilityIdentifier("np-play")
             Spacer()
-            Button { Task { try? await app.core.seekRelative(15) } } label: { SkipSeconds(forward: true) }
+            Button { app.player.seekBy(15) } label: { SkipSeconds(forward: true) }
                 .accessibilityLabel("Forward 15 seconds")
                 .accessibilityIdentifier("np-fwd15")
             Spacer()
@@ -452,7 +465,7 @@ struct ToggleIcon: View {
     var size: CGFloat = 24
     var body: some View {
         VStack(spacing: 3) {
-            Icon(name: name, size: size).foregroundStyle(on ? Palette.accent : Palette.text)
+            IconSwap(name: name, size: size).foregroundStyle(on ? Palette.accent : Palette.text)
             Circle().fill(on ? Palette.accent : .clear).frame(width: 4, height: 4)
         }
         .frame(width: 44, height: 52)
@@ -531,7 +544,9 @@ struct NPArtwork: View {
                 GeometryReader { geo in
                     strip(width: geo.size.width)
                 }
+                .opacity(ArtFlight.shared.flying && !video ? 0 : 1)
             }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ArtFlight.shared.npArt = $0 }
             .contentShape(Rectangle())
             .onTapGesture { if video { withAnimation(.easeOut(duration: 0.2)) { chrome.toggle() } } }
             .gesture(swipe)
@@ -864,6 +879,8 @@ struct NextInQueueCard: View {
 struct AboutArtistCard: View {
     @Environment(AppModel.self) private var app
     let artist: ArtistPage
+    /// The label flips on the tap; the library catches up (or a failure toast puts it back).
+    @State private var pending: Bool?
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
@@ -879,11 +896,17 @@ struct AboutArtistCard: View {
                         if let m = artist.monthlyListeners { Text(m.replacingOccurrences(of: "audience", with: "listeners")).font(Typo.meta).foregroundStyle(Palette.subdued) }
                     }
                     Spacer()
-                    let following = app.library.isSaved(artist.channelId)
+                    let saved = app.library.isSaved(artist.channelId)
+                    let following = pending ?? saved
                     Button(following ? "Following" : "Follow") {
-                        app.library.toggleSaved(BrowseItem(kind: .artist, id: artist.channelId, title: artist.name ?? "", subtitle: "Artist", thumbnail: artist.thumbnail))
+                        guard pending == nil else { return }
+                        pending = !saved
+                        let on = app.library.toggleSaved(BrowseItem(kind: .artist, id: artist.channelId, title: artist.name ?? "", subtitle: "Artist", thumbnail: artist.thumbnail))
                         Haptics.impact(.light)
+                        app.showToast(on ? "Following \(artist.name ?? "artist")" : "Unfollowed \(artist.name ?? "artist")")
+                        Task { try? await Task.sleep(nanoseconds: 4_000_000_000); pending = nil }
                     }
+                    .onChange(of: saved) { _, _ in pending = nil }
                     .font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
                     .padding(.horizontal, 16).frame(height: 32)
                     .overlay(Capsule().stroke(following ? Palette.text : Palette.muted, lineWidth: 1))
@@ -903,5 +926,58 @@ struct AboutArtistCard: View {
             app.router.push(.artist(artist.channelId))
         }
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The cover as ONE element between the mini player and Now Playing: on open it travels from the
+/// mini cover to the big one (and back on close) above both, while the two real covers hide. Frames
+/// are measured in global space; Now Playing's is kept at rest (its slide offset taken out).
+@MainActor @Observable final class ArtFlight {
+    static let shared = ArtFlight()
+    struct Leg { var from: CGRect; var to: CGRect; var fromRadius: CGFloat; var toRadius: CGFloat; var url: String? }
+    private(set) var leg: Leg?
+    private(set) var arrived = false
+    @ObservationIgnored var mini: CGRect = .zero
+    @ObservationIgnored var npArt: CGRect = .zero
+    @ObservationIgnored var npSheetY: CGFloat = 0
+    @ObservationIgnored var drag: CGFloat = 0
+    @ObservationIgnored private var generation = 0
+    var flying: Bool { leg != nil }
+    private var npRest: CGRect { npArt.offsetBy(dx: 0, dy: -npSheetY) }
+
+    func start(open: Bool, url: String?) {
+        generation += 1
+        let g = generation
+        guard !Motion.reduce, mini.width > 0, npArt.width > 0, url != nil,
+              !VideoStore.shared.showsVideo, !VideoStore.shared.miniShowsVideo else { leg = nil; return }
+        let np = npRest.offsetBy(dx: 0, dy: max(0, drag))
+        leg = open ? Leg(from: mini, to: npRest, fromRadius: Radius.s, toRadius: Radius.l, url: url)
+                   : Leg(from: np, to: mini, fromRadius: Radius.l, toRadius: Radius.s, url: url)
+        arrived = false
+        withAnimation(open ? NowPlayingCover.openAnimation : NowPlayingCover.closeAnimation) {
+            arrived = true
+        } completion: { [weak self] in
+            guard let self, self.generation == g else { return }
+            self.leg = nil
+        }
+    }
+}
+
+struct ArtFlightView: View {
+    private var flight: ArtFlight { ArtFlight.shared }
+    var body: some View {
+        GeometryReader { g in
+            if let leg = flight.leg {
+                let o = g.frame(in: .global).origin
+                let r = flight.arrived ? leg.to : leg.from
+                ArtImage(url: leg.url, px: 1080, radius: flight.arrived ? leg.toRadius : leg.fromRadius)
+                    .frame(width: r.width, height: r.height)
+                    .shadow(color: .black.opacity(flight.arrived ? 0.35 : 0), radius: 24, y: 10)
+                    .position(x: r.midX - o.x, y: r.midY - o.y)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

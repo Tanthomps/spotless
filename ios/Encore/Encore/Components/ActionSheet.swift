@@ -177,9 +177,12 @@ struct ActionSheet: View {
                             // Hiding what is playing moves on, as Spotify does.
                             if app.player.now?.videoId == s.videoId { app.player.skipNext() }
                             app.showToast("Song hidden", action: "Undo") {
-                                Task { try? await app.core.setHidden(s, hidden: false); await app.library.refresh(); await app.player.refresh() }
+                                Task {
+                                    do { try await app.core.setHidden(s, hidden: false) } catch { app.fail(friendlyError(error, "Couldn't unhide it")) }
+                                    await app.library.refresh(); await app.player.refresh()
+                                }
                             }
-                        } catch { app.showToast("Couldn't hide it") }
+                        } catch { app.fail(friendlyError(error, "Couldn't hide it")) }
                     }
                 })
             }
@@ -219,17 +222,21 @@ struct ActionSheet: View {
             }
             r += [
                 downloadRow(c),
-                SheetRow(icon: "queue", title: "Add to queue") {
+            ]
+            // Albums and playlists only: an artist has no fixed track list to queue.
+            if c.kind == .album || c.kind == .playlist {
+                r.append(SheetRow(icon: "queue", title: "Add to queue") {
                     Task {
-                        let items: [SongItem]
-                        switch c.kind {
-                        case .album: items = (try? await app.core.getAlbum(id: c.id).items) ?? []
-                        case .playlist: items = (try? await app.core.getPlaylist(id: c.id).items) ?? []
-                        default: items = []
+                        do {
+                            let items = c.kind == .album ? try await app.core.getAlbum(id: c.id).items : try await app.core.getPlaylist(id: c.id).items
+                            if items.isEmpty { app.showToast("Nothing to add from \(c.title)") } else { app.queue(items, from: c.title) }
+                        } catch {
+                            app.fail(friendlyError(error, "Couldn't add to queue"))
                         }
-                        if !items.isEmpty { app.queue(items, from: c.title) }
                     }
-                },
+                })
+            }
+            r += [
                 pinRow(c),
                 SheetRow(icon: "share-network", title: "Share") { ShareSheet.presentAfterSheet(.item(c), app: app) },
             ]
@@ -267,13 +274,24 @@ struct ActionSheet: View {
                 let inFolder = folders.first { $0.items.contains(c.id) }
                 for f in folders.prefix(6) where f.id != inFolder?.id {
                     r.append(SheetRow(icon: "folder", title: "Move to \(f.name)") {
-                        Task { try? await app.core.moveToFolder(itemId: c.id, folderId: f.id); await app.library.refresh() }
-                        app.showToast("Moved to \(f.name)")
+                        Task {
+                            do {
+                                try await app.core.moveToFolder(itemId: c.id, folderId: f.id)
+                                app.showToast("Moved to \(f.name)")
+                            } catch { app.fail(friendlyError(error, "Couldn't move it to \(f.name)")) }
+                            await app.library.refresh()
+                        }
                     })
                 }
                 if let inFolder {
                     r.append(SheetRow(icon: "folder", title: "Remove from \(inFolder.name)") {
-                        Task { try? await app.core.moveToFolder(itemId: c.id, folderId: nil); await app.library.refresh() }
+                        Task {
+                            do {
+                                try await app.core.moveToFolder(itemId: c.id, folderId: nil)
+                                app.showToast("Removed from \(inFolder.name)")
+                            } catch { app.fail(friendlyError(error, "Couldn't take it out of \(inFolder.name)")) }
+                            await app.library.refresh()
+                        }
                     })
                 }
             }

@@ -143,7 +143,9 @@ extension ImportFlow {
         guard tiers[tier] == nil else { return }
         rowsLoading = true
         defer { rowsLoading = false }
-        do { tiers[tier] = try await app.core.importRows(tier: tier) } catch { self.error = "The songs couldn't be loaded." }
+        do { tiers[tier] = try await app.core.importRows(tier: tier) } catch {
+            self.error = friendlyError(error, "The songs couldn't be loaded")
+        }
     }
 
     /// A song for the row (kept from now on, in later imports too), or `nil` to leave it out.
@@ -155,7 +157,7 @@ extension ImportFlow {
             }
             settled[row.key] = song != nil
             choosing = nil
-        } catch { self.error = "That change couldn't be saved." }
+        } catch { self.error = friendlyError(error, "That change couldn't be saved") }
     }
 
     /// Write everything (`import_create`); the progress step follows it to Done. Like the desktop:
@@ -172,7 +174,7 @@ extension ImportFlow {
         let local = !app.account.signedIn || !onAccount
         do { try await app.core.importCreate(names: names, local: local) } catch {
             creating = false
-            self.error = "The import couldn't be saved."
+            self.error = friendlyError(error, "The import couldn't be saved")
             return
         }
         go(.progress)
@@ -231,11 +233,13 @@ struct ImportReviewStep: View {
         let missing = s?.missing ?? 0
         VStack(spacing: 0) {
             Spacer(minLength: Space.xl)
-            Circle().fill(Palette.accent).frame(width: 88, height: 88)
-                .overlay(Icon(name: "check", size: 44).foregroundStyle(.black))
+            let none = flow.readyCount == 0
+            Circle().fill(none ? Palette.elevatedHighlight : Palette.accent).frame(width: 88, height: 88)
+                .overlay(Icon(name: none ? "warning-circle" : "check", size: 44).foregroundStyle(none ? Palette.text : .black))
                 .padding(.bottom, Space.xl)
                 .accessibilityHidden(true)
-            OnboardHeader(title: "\(flow.readyCount.formatted()) songs matched", line: flow.addsLine, center: true)
+            OnboardHeader(title: none ? "No songs matched" : "\(flow.readyCount.formatted()) song\(flow.readyCount == 1 ? "" : "s") matched",
+                          line: none ? "Check the songs to pick matches by hand, or try another link." : flow.addsLine, center: true)
             if missing > 0 {
                 Text("\(missing) \(missing == 1 ? "isn't" : "aren't") on YouTube Music and will be left out.")
                     .font(Typo.font(14)).foregroundStyle(Palette.dim).multilineTextAlignment(.center)
@@ -248,7 +252,7 @@ struct ImportReviewStep: View {
                 Text(e).font(Typo.font(14)).foregroundStyle(Palette.negative).padding(.bottom, Space.s)
             }
             VStack(spacing: Space.s) {
-                OnboardPrimaryButton(title: "Looks good", busy: flow.creating) { Task { await flow.create(app) } }
+                OnboardPrimaryButton(title: "Looks good", busy: flow.creating, enabled: flow.readyCount > 0) { Task { await flow.create(app) } }
                     .accessibilityIdentifier("import-create")
                 OnboardTextButton(title: flow.checkTitle) { Task { await flow.openCheck(app) } }
                     .accessibilityIdentifier("import-check")
@@ -311,7 +315,15 @@ struct ImportCheckStep: View {
                 section("missing", "Not on YouTube Music")
                 section("matched", "Matched")
                 if flow.rowsLoading {
-                    ProgressView().tint(Palette.subdued).frame(maxWidth: .infinity).padding(.vertical, Space.xl)
+                    SkeletonRows(count: 4)
+                } else if let e = flow.error {
+                    VStack(spacing: Space.s) {
+                        Text(e).font(Typo.font(14)).foregroundStyle(Palette.negative)
+                        Button("Try again") { flow.error = nil; Task { await flow.openCheck(app) } }
+                            .font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
+                            .accessibilityIdentifier("import-check-retry")
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, Space.xl)
                 }
                 if flow.tiers["matched"] == nil, (s?.matched ?? 0) > 0, !flow.rowsLoading {
                     OnboardTextButton(title: "Show \((s?.matched ?? 0).formatted()) matched songs") {
@@ -440,6 +452,7 @@ struct ImportChooseSheet: View {
     @State private var query = ""
     @State private var results: [SongItem]?
     @State private var searching = false
+    @State private var searchFailed = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -466,9 +479,14 @@ struct ImportChooseSheet: View {
                         .font(Typo.font(12)).foregroundStyle(Palette.dim).padding(.horizontal, Space.gutter).padding(.bottom, Space.l)
                     Text(results == nil ? "Suggestions" : "Results").font(Typo.font(16, .bold))
                         .padding(.horizontal, Space.gutter).padding(.bottom, Space.s)
+                    if let e = flow.error {
+                        Text(e).font(Typo.font(14)).foregroundStyle(Palette.negative)
+                            .padding(.horizontal, Space.gutter).padding(.bottom, Space.s)
+                            .accessibilityIdentifier("import-choose-error")
+                    }
                     let list = results ?? candidates
                     if list.isEmpty {
-                        Text(searching ? "Searching…" : results == nil ? "No suggestions. Try a search." : "No songs found.")
+                        Text(searching ? "Searching…" : searchFailed ? "Couldn't search. Check your connection." : results == nil ? "No suggestions. Try a search." : "No songs found.")
                             .font(Typo.rowSubtitle).foregroundStyle(Palette.subdued)
                             .frame(maxWidth: .infinity).padding(.vertical, Space.xl)
                     }
@@ -489,7 +507,7 @@ struct ImportChooseSheet: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .foregroundStyle(Palette.text)
-        .onAppear { query = "\(row.title) \(row.artists)" }
+        .onAppear { query = "\(row.title) \(row.artists)"; flow.error = nil }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("import-choose")
     }
@@ -522,9 +540,15 @@ struct ImportChooseSheet: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         searching = true
+        searchFailed = false
         defer { searching = false }
-        if let id = youTubeVideoId(q), let s = try? await app.core.song(videoId: id) { results = [s]; return }
-        results = (try? await app.core.search(query: q)) ?? []
+        do {
+            if let id = youTubeVideoId(q), let s = try? await app.core.song(videoId: id) { results = [s]; return }
+            results = try await app.core.search(query: q)
+        } catch {
+            results = []
+            searchFailed = !FriendlyError.isCancellation(error)
+        }
     }
 
     private func candidateRow(_ s: SongItem) -> some View {

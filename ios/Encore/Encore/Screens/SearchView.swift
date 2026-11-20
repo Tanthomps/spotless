@@ -176,6 +176,8 @@ struct SearchFocusView: View {
     @State private var chipNext: String?
     @State private var chipStarted = false
     @State private var chipLoading = false
+    /// A tab's page failed: its list ends in "Couldn't load results · Try again" instead of placeholders.
+    @State private var chipFailed = false
     @State private var chipCorrection: SearchCorrection?
     @State private var chipTryThese: SearchTryThese?
     /// stream: audiobooks — the best book matches, at the end of the Top list.
@@ -393,10 +395,12 @@ struct SearchFocusView: View {
                                 .accessibilityIdentifier("search-correction")
                         }
                         if category == nil {
-                            ForEach(rows, id: \.self) { item in
-                                ResultRow(item: item) { open(item) }
+                            if results == nil { ForEach(0..<8, id: \.self) { _ in skeletonRow } }
+                            ForEach(Array(rows.enumerated()), id: \.element) { i, item in
+                                ResultRow(item: item) { open(item) }.arriveRow(i)
                             }
                             if let t = overview?.tryThese { tryTheseRows(t) }
+                            else if results != nil && rows.isEmpty { noResults }
                         } else if chipFilter == "videos" {
                             ForEach(Array(chipVideos.enumerated()), id: \.element.id) { i, v in
                                 VideoResultRow(song: v) { openVideo(v) }
@@ -410,12 +414,20 @@ struct SearchFocusView: View {
                         } else {
                             ForEach(Array(chipItems.enumerated()), id: \.element.id) { i, item in
                                 ResultRow(item: item) { open(item) }
+                                    .arriveRow(i)
                                     .onAppear { if i >= chipItems.count - 8 { Task { await loadMore() } } }
                             }
                         }
-                        if category != nil && (chipLoading || !chipStarted || chipNext != nil) {
+                        if category != nil && chipFailed && !chipLoading {
+                            LoadMoreFailedRow(text: chipStarted ? "Couldn't load more" : "Couldn't load results") {
+                                chipFailed = false; Task { await loadMore() }
+                            }
+                        } else if category != nil && (chipLoading || !chipStarted || chipNext != nil) {
                             ForEach(0..<(chipStarted ? 3 : 8), id: \.self) { _ in skeletonRow }
                                 .onAppear { Task { await loadMore() } }
+                        }
+                        if category != nil, chipStarted, !chipFailed, chipNext == nil, chipItems.isEmpty, chipEpisodes.isEmpty, chipVideos.isEmpty {
+                            noResults
                         }
                         if category != nil, chipStarted, chipNext == nil, let t = chipTryThese { tryTheseRows(t) }
                     }
@@ -459,6 +471,15 @@ struct SearchFocusView: View {
         .accessibilityIdentifier("search-suggestion")
     }
 
+    private var noResults: some View {
+        VStack(spacing: Space.s) {
+            Text("No results for \"\(query)\"").font(Typo.font(16, .bold)).multilineTextAlignment(.center)
+            Text("Check the spelling or try fewer words.").font(Typo.font(14)).foregroundStyle(Palette.subdued)
+        }
+        .frame(maxWidth: .infinity).padding(.top, 60).padding(.horizontal, Space.xxl)
+        .accessibilityIdentifier("search-no-results")
+    }
+
     private var skeletonRow: some View {
         HStack(spacing: Space.m) {
             RoundedRectangle(cornerRadius: Radius.xs).fill(Palette.elevatedHighlight).frame(width: Metrics.rowArt, height: Metrics.rowArt)
@@ -497,7 +518,7 @@ struct SearchFocusView: View {
     /// A chip opened (or the query changed under it): its first page; Songs starts from the All
     /// view's page and token.
     private func startChip() async {
-        chipItems = []; chipEpisodes = []; chipVideos = []; chipNext = nil; chipStarted = false; chipCorrection = nil; chipTryThese = nil
+        chipItems = []; chipEpisodes = []; chipVideos = []; chipNext = nil; chipStarted = false; chipCorrection = nil; chipTryThese = nil; chipFailed = false
         guard let f = chipFilter, !query.isEmpty else { return }
         try? await Task.sleep(nanoseconds: 200_000_000)
         guard !Task.isCancelled else { return }
@@ -518,13 +539,24 @@ struct SearchFocusView: View {
         let asked = query
         // stream: audiobooks — LibriVox books, one page (`audiobook_search`).
         if f == "audiobooks" {
-            let books = (try? await app.core.audiobookSearch(query: query)) ?? []
-            guard asked == query, chipFilter == f else { return }
-            chipItems = books.map(\.card); chipQuery = query; chipNext = nil; chipStarted = true
+            do {
+                let books = try await app.core.audiobookSearch(query: query)
+                guard asked == query, chipFilter == f else { return }
+                chipItems = books.map(\.card); chipQuery = query; chipNext = nil; chipStarted = true; chipFailed = false
+            } catch {
+                if asked == query, chipFilter == f, !FriendlyError.isCancellation(error) { chipFailed = true }
+            }
             return
         }
-        guard let p = try? await app.core.searchPage(query: chipQuery.isEmpty ? query : chipQuery, filter: f, continuation: chipStarted ? chipNext : nil),
-              asked == query, chipFilter == f else { return }
+        let p: SearchPage
+        do {
+            p = try await app.core.searchPage(query: chipQuery.isEmpty ? query : chipQuery, filter: f, continuation: chipStarted ? chipNext : nil)
+        } catch {
+            if asked == query, chipFilter == f, !FriendlyError.isCancellation(error) { chipFailed = true }
+            return
+        }
+        guard asked == query, chipFilter == f else { return }
+        chipFailed = false
         if !chipStarted { chipQuery = p.query; chipCorrection = p.correction; chipTryThese = p.tryThese; chipStarted = true }
         let have = Set(chipItems.map(\.id) + chipEpisodes.map(\.id) + chipVideos.map(\.id))
         if f == "videos" { chipVideos += p.songs.filter { !have.contains($0.videoId) } }
@@ -717,18 +749,29 @@ struct SearchResultsView: View {
     @Environment(AppModel.self) private var app
     let query: String
     @State private var results: SearchResults?
+    @State private var failed = false
+    @State private var attempt = 0
     var body: some View {
+        let items = (results?.top ?? []) + (results?.songs ?? []) + (results?.albums ?? [])
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach((results?.top ?? []) + (results?.songs ?? []) + (results?.albums ?? []), id: \.self) { item in
-                    ResultRow(item: item) { app.router.open(item) }
+                if results == nil { EntityLoadState(failed: failed) { failed = false; attempt += 1 } }
+                else if items.isEmpty {
+                    Text("No results for \"\(query)\"").font(Typo.font(16, .bold)).padding(.top, 60)
+                }
+                ForEach(Array(items.enumerated()), id: \.element) { i, item in
+                    ResultRow(item: item) { app.router.open(item) }.arriveRow(i)
                 }
             }
         }
         .navigationTitle(query)
         .background(Palette.base)
         .chromeInset()
-        .task { results = try? await app.core.searchAll(query: query, recordHistory: true) }
+        .task(id: attempt) {
+            do { results = try await app.core.searchAll(query: query, recordHistory: true) } catch {
+                if !FriendlyError.isCancellation(error) { failed = true }
+            }
+        }
     }
 }
 
@@ -738,22 +781,33 @@ struct MoodView: View {
     let params: String
     let title: String
     @State private var page: SectionsPage?
+    @State private var failed = false
+    @State private var attempt = 0
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
                 Text(title).font(Typo.font(28, .bold)).padding(.horizontal, Space.gutter).padding(.top, Space.s)
-                ForEach(page?.sections ?? [], id: \.title) { s in
+                if page == nil { EntityLoadState(failed: failed) { failed = false; attempt += 1 } }
+                else if page?.sections.isEmpty == true {
+                    Text("Nothing here right now").font(Typo.font(16, .bold)).frame(maxWidth: .infinity).padding(.top, 60)
+                }
+                ForEach(Array((page?.sections ?? []).enumerated()), id: \.element.title) { i, s in
                     VStack(alignment: .leading, spacing: Space.m) {
                         SectionTitle(title: s.title)
                         CardShelf(items: s.items)
                     }
+                    .arriveBlock(i)
                 }
             }
         }
         .foregroundStyle(Palette.text)
         .background(Palette.base)
         .chromeInset()
-        .task { page = try? await app.core.getBrowseSections(browseId: moodsCategoryId, params: params) }
+        .task(id: attempt) {
+            do { page = try await app.core.getBrowseSections(browseId: moodsCategoryId, params: params) } catch {
+                if !FriendlyError.isCancellation(error) { failed = true }
+            }
+        }
     }
 }
 

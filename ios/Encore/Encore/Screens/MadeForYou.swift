@@ -284,7 +284,7 @@ private struct ReleaseRow: View {
                     Haptics.impact(.light)
                     app.showToast(on ? "Added to Your Library" : "Removed from Your Library")
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Library" : "Save to Your Library")
                 Button { app.sheet = .collection(card) } label: {
@@ -340,7 +340,7 @@ private struct NewEpisodeRow: View {
                     Haptics.impact(.light)
                     app.showToast(on ? "Added to Your Episodes" : "Removed from Your Episodes")
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Episodes" : "Save to Your Episodes")
                 Button { app.sheet = .episode(episode) } label: {
@@ -378,6 +378,7 @@ struct DailyMixView: View {
     @State private var failed = false
     @State private var attempt = 0
     @State private var moreOpen = false
+    @State private var saving = false
 
     private var items: [SongItem] { songs ?? [] }
     private var cover: String? { art ?? songs?.first?.thumbnail }
@@ -410,6 +411,7 @@ struct DailyMixView: View {
                 }
                 ForEach(Array(items.enumerated()), id: \.offset) { i, s in
                     TrackRow(song: s, context: context) { play(i) }
+                        .arriveRow(i)
                 }
             }
         }
@@ -460,16 +462,25 @@ struct DailyMixView: View {
         app.player.play(items, at: at, context: context, shuffle: shuffle)
     }
 
+    /// One save at a time; a playlist that got made but not filled is taken back out.
     private func save(_ list: [SongItem]) {
+        guard !saving else { return }
+        saving = true
         Task {
-            do {
-                let p = try await app.core.createPlaylist(name: title)
-                try await app.core.addToPlaylist(id: p.id, songs: list)
-                await app.library.refresh()
-                app.showToast("Added to Your Library", action: "View") { app.router.push(.playlist(p.id)) }
-            } catch {
-                app.showToast("Couldn't save this mix")
+            defer { saving = false }
+            let p: LibPlaylist
+            do { p = try await app.core.createPlaylist(name: title) } catch {
+                return app.fail(friendlyError(error, "Couldn't save this mix"))
             }
+            do {
+                try await app.core.addToPlaylist(id: p.id, songs: list)
+            } catch {
+                try? await app.core.deletePlaylist(id: p.id)
+                await app.library.refresh()
+                return app.fail(friendlyError(error, "Couldn't save this mix"))
+            }
+            await app.library.refresh()
+            app.showToast("Added to Your Library", action: "View") { app.router.push(.playlist(p.id)) }
         }
     }
 }

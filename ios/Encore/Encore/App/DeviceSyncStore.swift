@@ -26,6 +26,9 @@ final class DeviceSyncStore {
     var digits = ""
     var busy = false
     var error: PairingError?
+    @ObservationIgnored private var joinTask: Task<Void, Never>?
+    /// The join's own 20 s timer ran out (as opposed to the user closing or going back).
+    @ObservationIgnored private var joinTimedOut = false
     /// Tests and screenshots: a fixed clock for the countdown.
     var nowOverride: Double?
     /// 200 ms waits for Bonjour to find a device showing a code before joining (tests: 0).
@@ -92,15 +95,20 @@ final class DeviceSyncStore {
 
     // MARK: Settings › Devices
 
-    func syncNow() {
+    /// `fail` gets the sentence to show when the core refuses (the card keeps its state).
+    func syncNow(fail: @escaping @MainActor (String) -> Void) {
         Task {
-            if let s = try? await core.syncNow() { apply(s) }
+            do { apply(try await core.syncNow()) } catch {
+                fail(friendlyError(error, "Couldn't sync. Check that both devices are on the same Wi-Fi."))
+            }
         }
     }
 
-    func unlink() {
+    func unlink(done: @escaping @MainActor () -> Void, fail: @escaping @MainActor (String) -> Void) {
         Task {
-            if let s = try? await core.syncUnpair() { apply(s) }
+            do { apply(try await core.syncUnpair()); done() } catch {
+                fail(friendlyError(error, "Couldn't unlink. Try again."))
+            }
         }
     }
 
@@ -124,6 +132,7 @@ final class DeviceSyncStore {
 
     func go(_ s: Step) {
         error = nil
+        joinTask?.cancel(); joinTask = nil
         if step == .showCode && s != .showCode { cancelCode() }
         withAnimation(Motion.spring) { step = s }
         switch s {
@@ -135,6 +144,7 @@ final class DeviceSyncStore {
 
     /// The sheet went away (Done, Cancel or a swipe).
     func closed() {
+        joinTask?.cancel(); joinTask = nil
         if step == .showCode && codeEnd == nil { cancelCode() }
         bonjour.stop()
         advertiser.stop()
@@ -193,8 +203,21 @@ final class DeviceSyncStore {
         if qr == nil && digits.count != 6 { error = PairingError.from("bad_code"); return }
         busy = true; error = nil
         bonjour.start()
-        Task {
+        joinTask?.cancel()
+        joinTimedOut = false
+        joinTask = Task {
             defer { busy = false }
+            // ponytail: 20 s for the whole join; per-host timeouts if one dead host eats it all.
+            let timeout = Task {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                guard !Task.isCancelled else { return }
+                self.joinTimedOut = true
+                self.joinTask?.cancel()
+                self.busy = false
+                self.error = PairingError.from("unreachable")
+                Haptics.error()
+            }
+            defer { timeout.cancel() }
             var hosts: [SyncBonjour.Host] = []
             if qr == nil {
                 // A device showing a code advertises it: give Bonjour a moment to find it.
@@ -207,10 +230,13 @@ final class DeviceSyncStore {
             for host in hosts.isEmpty ? [nil] : hosts.map(Optional.some) {
                 do {
                     let s = try await core.syncJoin(code: qr == nil ? digits : nil, qr: qr, host: host?.host, port: host?.port)
+                    // Closed, went back or timed out meanwhile: don't jump to Linked behind the user's back.
+                    guard !Task.isCancelled else { return }
                     apply(s)
                     linked()
                     return
                 } catch {
+                    if Task.isCancelled { return }
                     let e = PairingError.from(FriendlyError.raw(error))
                     last = e
                     if e.kind != .unreachable { break }
@@ -219,6 +245,7 @@ final class DeviceSyncStore {
             if let e = last, e.kind == .unreachable || e.kind == .other, bonjour.denied {
                 last = .localNetwork
             }
+            if Task.isCancelled { return }
             error = last
             if last?.kind != .unreachable && last?.kind != .localNetwork && last?.kind != .other { digits = "" }
             Haptics.error()

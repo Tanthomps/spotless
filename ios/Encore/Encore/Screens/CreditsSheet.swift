@@ -121,7 +121,7 @@ struct CreditsSheet: View {
                 .accessibilityIdentifier("credits-retry")
             }
         } else {
-            ProgressView().tint(Palette.subdued).frame(maxWidth: .infinity).padding(.top, Space.xl)
+            SkeletonRows(count: 4).padding(.top, Space.l)
                 .accessibilityIdentifier("credits-loading")
         }
     }

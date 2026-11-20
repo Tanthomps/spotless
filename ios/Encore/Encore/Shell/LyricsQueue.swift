@@ -5,10 +5,24 @@ import SwiftUI
 final class LyricsModel {
     var lyrics: Lyrics?
     var loadedFor: String?
+    /// Loading, a real "no lyrics" answer and a failed fetch look different (and only a failure retries).
+    enum Phase { case loading, failed, done }
+    var phase: Phase = .loading
     func load(_ app: AppModel) async {
         guard let s = app.player.current, s.videoId != loadedFor else { return }
         loadedFor = s.videoId
-        lyrics = try? await app.core.getLyrics(videoId: s.videoId, title: s.title, artists: s.artists, duration: s.seconds)
+        phase = .loading
+        lyrics = nil
+        do {
+            let l = try await app.core.getLyrics(videoId: s.videoId, title: s.title, artists: s.artists, duration: s.seconds)
+            guard loadedFor == s.videoId else { return }
+            lyrics = l
+            phase = .done
+        } catch {
+            guard loadedFor == s.videoId else { return }
+            if FriendlyError.isCancellation(error) { loadedFor = nil; return }
+            phase = .failed
+        }
     }
     /// Index of the line being sung (synced lyrics), or nil before the first cue.
     func activeIndex(at seconds: Double) -> Int? { lyrics?.activeIndex(at: seconds) }
@@ -71,7 +85,7 @@ struct LyricsCard: View {
                 .accessibilityIdentifier("lyrics-expand")
             }
             if model.lines.isEmpty {
-                Text(model.lyrics == nil ? "Lyrics aren't available for this song" : "♪").font(Typo.lyricsCard).foregroundStyle(.black.opacity(0.6))
+                LyricsStatus(model: model, font: Typo.lyricsCard, color: .black.opacity(0.6))
             } else {
                 let window = lineWindow(active)
                 VStack(alignment: .leading, spacing: 6) {
@@ -144,6 +158,9 @@ struct LyricsFullView: View {
                 ScrollView(showsIndicators: false) {
                     // 26/700, 6 pt line spacing, 16 pt between lines, insets 24.
                     VStack(alignment: .leading, spacing: 16) {
+                        if model.lines.isEmpty {
+                            LyricsStatus(model: model, font: Typo.lyricsFull, color: Palette.text.opacity(0.7))
+                        }
                         ForEach(model.lines, id: \.0) { i, line in
                             Text(line.text).font(Typo.lyricsFull).lineSpacing(6).foregroundStyle(lineColor(i, active))
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -361,6 +378,8 @@ struct QueueView: View {
                 .environment(\.editMode, .constant(.active))
                 .environment(\.defaultMinListRowHeight, 64)
                 .tint(Palette.accent)   // accent selection circles
+                // Selection is by queue position: if the queue moves under it, start the selection over.
+                .onChange(of: "\(app.player.queue.items.count)#\(app.player.queue.currentIndex)") { _, _ in selection = [] }
                 footer
                     .padding(.horizontal, Space.l).padding(.top, Space.s)
                     .padding(.bottom, max(Space.l, insets.bottom - Space.s))
@@ -370,7 +389,7 @@ struct QueueView: View {
                                 .padding(.horizontal, 12).frame(height: 30)
                                 .background(Capsule().fill(Color(hex: "#2a2a2a")))
                                 .offset(y: -38)
-                                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                                .transition(Motion.pop)
                                 .accessibilityIdentifier("queue-pill")
                         }
                     }
@@ -393,7 +412,7 @@ struct QueueView: View {
                 ToastView(message: toast)
                     .padding(.horizontal, 8)
                     .padding(.bottom, max(Space.l, insets.bottom - Space.s) + 84)
-                    .transition(Motion.slide(.bottom, fade: true))
+                    .transition(Motion.toast)
                     .zIndex(2)
             }
         }
@@ -462,7 +481,7 @@ struct QueueView: View {
             Spacer(minLength: 0)
             Button { app.player.togglePause() } label: {
                 Circle().fill(Color.white).frame(width: 32, height: 32)
-                    .overlay(Icon(name: app.player.paused ? "play" : "pause", fill: true, size: 14).foregroundStyle(.black)
+                    .overlay(IconSwap(name: app.player.paused ? "play" : "pause", fill: true, size: 14).foregroundStyle(.black)
                         .offset(x: app.player.paused ? 1 : 0))
                     .frame(width: 44, height: 44)
             }
@@ -477,6 +496,8 @@ struct QueueView: View {
 
     private func row(_ s: SongItem, index: Int) -> some View {
         HStack(spacing: Space.m) {
+          // The tap-to-play area stops before the suggestion buttons, so − and + never also play the row.
+          HStack(spacing: Space.m) {
             ArtImage(url: s.thumbnail, px: 144, radius: Radius.xs).frame(width: 48, height: 48)
             VStack(alignment: .leading, spacing: 3) {
                 Text(s.title).font(Typo.rowTitle).foregroundStyle(Palette.text).lineLimit(1)
@@ -488,21 +509,39 @@ struct QueueView: View {
                 }
             }
             Spacer(minLength: 0)
+          }
+          .contentShape(Rectangle())
+          // A tap plays that row (Spotify); in Edit mode the list's own tap selects it instead.
+          .simultaneousGesture(TapGesture().onEnded { app.player.playIndex(index) }, including: editing ? .subviews : .all)
             if isSuggestion(s) && !editing {
                 Button {
                     Haptics.impact(.light)
+                    let before = app.settings.smartShuffle.recIds
                     app.settings.smartShuffle.recIds.removeAll { $0 == s.videoId }
-                    Task { if let st = try? await app.core.smartShuffleRemove(videoId: s.videoId) { app.settings.smartShuffle = st } }
-                    app.showToast("Removed suggestion")
+                    Task {
+                        do {
+                            app.settings.smartShuffle = try await app.core.smartShuffleRemove(videoId: s.videoId)
+                            app.showToast("Removed suggestion")
+                        } catch {
+                            app.settings.smartShuffle.recIds = before
+                            app.fail(friendlyError(error, "Couldn't remove that suggestion"))
+                        }
+                    }
                 } label: { Icon(name: "minus-circle", size: 22).foregroundStyle(Palette.subdued).frame(width: 36, height: 44) }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Remove suggestion")
                 Button {
                     Haptics.impact(.light)
+                    let before = app.settings.smartShuffle.recIds
                     app.settings.smartShuffle.recIds.removeAll { $0 == s.videoId }
                     Task {
-                        if let st = try? await app.core.smartShuffleKeep(videoId: s.videoId) { app.settings.smartShuffle = st }
-                        if !app.library.isLiked(s.videoId) { app.toggleLike(s) }
+                        do {
+                            app.settings.smartShuffle = try await app.core.smartShuffleKeep(videoId: s.videoId)
+                            if !app.library.isLiked(s.videoId) { app.toggleLike(s) }
+                        } catch {
+                            app.settings.smartShuffle.recIds = before
+                            app.fail(friendlyError(error, "Couldn't keep that suggestion"))
+                        }
                     }
                 } label: { Icon(name: "plus-circle", size: 22).foregroundStyle(Palette.subdued).frame(width: 36, height: 44) }
                 .buttonStyle(.borderless)
@@ -511,8 +550,6 @@ struct QueueView: View {
         }
         .frame(height: 64)
         .contentShape(Rectangle())
-        // A tap plays that row (Spotify); in Edit mode the list's own tap selects it instead.
-        .simultaneousGesture(TapGesture().onEnded { app.player.playIndex(index) }, including: editing ? .subviews : .all)
         .accessibilityAddTraits(.isButton)
         .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 12))
         .listRowBackground(Color.clear)
@@ -548,6 +585,11 @@ struct QueueView: View {
                 glassButton("Remove", icon: "minus-circle", on: false, enabled: !selection.isEmpty) {
                     for i in selection.sorted(by: >) { app.player.remove(at: i) }
                     selection = []
+                    // ponytail: Undo puts them back right after the current song, not at their old spots.
+                    let removed = songs
+                    app.showToast(removed.count == 1 ? "Removed from queue" : "Removed \(removed.count) songs", action: "Undo") {
+                        app.player.playNext(removed)
+                    }
                 }
                 glassButton("Add to playlist", icon: "music-notes-plus", on: false, enabled: !selection.isEmpty) {
                     app.sheet = .addToPlaylist(songs); selection = []
@@ -580,5 +622,37 @@ struct QueueView: View {
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.4)
         .accessibilityIdentifier("queue-\(t.lowercased())")
+    }
+}
+
+/// What the lyrics area says when there are no lines: grey placeholder lines while loading, a retry
+/// after a failed fetch, or that this song has none.
+struct LyricsStatus: View {
+    @Environment(AppModel.self) private var app
+    let model: LyricsModel
+    let font: Font
+    let color: Color
+    var body: some View {
+        switch model.phase {
+        case .loading:
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach([0.9, 0.7, 0.8], id: \.self) { w in
+                    GeometryReader { g in Capsule().fill(color.opacity(0.25)).frame(width: g.size.width * w, height: 14) }.frame(height: 14)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Loading lyrics")
+        case .failed:
+            VStack(alignment: .leading, spacing: Space.s) {
+                Text("Couldn't load lyrics").font(font).foregroundStyle(color)
+                Button("Try again") { Task { await model.reload(app) } }
+                    .font(Typo.font(14, .bold)).foregroundStyle(color)
+                    .padding(.horizontal, 16).frame(height: 32)
+                    .overlay(Capsule().stroke(color, lineWidth: 1))
+                    .accessibilityIdentifier("lyrics-retry")
+            }
+        case .done:
+            Text(model.lyrics == nil ? "Lyrics aren't available for this song" : "♪").font(font).foregroundStyle(color)
+        }
     }
 }

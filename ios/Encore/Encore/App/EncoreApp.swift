@@ -126,7 +126,9 @@ final class CoreBoot {
     private func boot() {
         attempts += 1
         do {
-            state = .ready(AppModel(core: try start()))
+            let core = try start()
+            ArtworkCache.resolver = { r in await artLookup(core, r) }
+            state = .ready(AppModel(core: core))
         } catch {
             let raw = FriendlyError.raw(error)
             coreLog.fault("core failed to start (attempt \(self.attempts)): \(raw, privacy: .public)")
@@ -267,4 +269,26 @@ enum Diagnostics {
         try? report(failure).write(to: url, atomically: true, encoding: .utf8)
         return url
     }
+}
+
+/// Art for an item that arrived without any (imported Spotify history, local "Mix" shelves): its
+/// own page's art by id shape, else a generated cover for a mix so it never shows a bare note.
+func artLookup(_ core: CoreClient, _ r: ArtRef) async -> String? {
+    let id = r.id
+    var found: String?
+    if id.hasPrefix("UC") {
+        found = try? await core.getArtist(id: id).thumbnail
+    } else if id.hasPrefix("MPRE") || id.hasPrefix("OLAK") {
+        found = try? await core.getAlbum(id: id).thumbnail
+    } else if id.hasPrefix("VL") || id.hasPrefix("PL") || id.hasPrefix("RD") || id.hasPrefix("LOCALPLAYLIST") {
+        found = try? await core.getPlaylist(id: id).thumbnail
+    } else if id.count == 11 {
+        found = try? await core.song(videoId: id).thumbnail
+    }
+    if let found { return found }
+    if r.title.hasSuffix(" Mix") || r.title.hasSuffix(" Radio") {
+        let n = r.title.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return "mfy:\(r.title.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? r.title)#\(abs(n) % 10)"
+    }
+    return nil
 }

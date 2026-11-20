@@ -34,17 +34,23 @@ struct ChartsView: View {
     @State private var page: ChartsPage?
     @State private var failed = false
     @State private var country: String?
+    /// A country switch is loading: the old chart dims until the new one arrives.
+    @State private var loadingCountry = false
     @State private var attempt = 0
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
                 BrowseHeader(title: "Charts") { countryPicker }
-                if let p = page {
+                if let p = page, p.featured.isEmpty && p.sections.isEmpty {
+                    EntityEmptyState(title: "Nothing to show right now", line: "Try again in a little while.", action: "Try again") { attempt += 1 }
+                } else if let p = page {
                     if !p.featured.isEmpty { shelf("Featured charts", p.featured) }
                     ForEach(Array(p.sections.enumerated()), id: \.offset) { _, s in
                         if s.kind == "top_artists" { ranked(s) } else { shelf(s.title, s.items.map(\.item)) }
                     }
+                    .opacity(loadingCountry ? 0.4 : 1)
+                    .animation(.easeOut(duration: 0.2), value: loadingCountry)
                 } else {
                     EntityLoadState(failed: failed) { failed = false; attempt += 1 }
                 }
@@ -59,7 +65,17 @@ struct ChartsView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("charts-page")
         .task(id: "\(country ?? "")#\(attempt)") {
-            do { page = try await app.core.getCharts(country: country) } catch { if page == nil { failed = true } }
+            loadingCountry = page != nil
+            defer { loadingCountry = false }
+            do { page = try await app.core.getCharts(country: country) } catch {
+                guard !FriendlyError.isCancellation(error) else { return }
+                if page == nil { failed = true } else {
+                    // The picker goes back to the chart still on screen.
+                    let name = country ?? "that country"
+                    country = page?.country?.code
+                    app.fail(friendlyError(error, "Couldn't load the chart for \(name)"))
+                }
+            }
         }
     }
 

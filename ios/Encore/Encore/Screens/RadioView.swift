@@ -33,6 +33,7 @@ struct RadioView: View {
     @State private var attempt = 0
     @State private var accent: UIColor?
     @State private var moreOpen = false
+    @State private var saving = false
     @State private var savedTick = 0
 
     private var radioKey: String { RadioSaves.radioKey(kind: kind, id: id) }
@@ -127,7 +128,7 @@ struct RadioView: View {
         HStack(spacing: Space.xl) {
             let saved = savedId != nil
             Button(action: toggleSave) {
-                Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24)
+                IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24)
                     .foregroundStyle(saved ? Palette.accent : Palette.subdued)
             }
             .disabled(page == nil)
@@ -179,10 +180,12 @@ struct RadioView: View {
 
     /// Save: the radio as one of your playlists ("<Seed> Radio"). Pressed again, it is removed, with Undo.
     private func toggleSave() {
-        guard let page else { return }
+        guard let page, !saving else { return }
         let key = radioKey
         Haptics.impact(.light)
+        saving = true
         Task {
+            defer { saving = false }
             do {
                 if let pid = savedId {
                     try await app.core.deletePlaylist(id: pid)
@@ -190,8 +193,10 @@ struct RadioView: View {
                     await app.library.refresh()
                     app.showToast("Removed from Your Library", action: "Undo") {
                         Task {
-                            try? await app.core.restorePlaylist(id: pid)
-                            RadioSaves.set(key, pid, defaults: prefs); savedTick += 1
+                            do {
+                                try await app.core.restorePlaylist(id: pid)
+                                RadioSaves.set(key, pid, defaults: prefs); savedTick += 1
+                            } catch { app.fail(friendlyError(error, "Couldn't put the radio back")) }
                             await app.library.refresh()
                         }
                     }
@@ -204,7 +209,7 @@ struct RadioView: View {
                 await app.library.refresh()
                 app.showToast("Added to Your Library", action: "View") { app.router.push(.playlist(p.id)) }
             } catch {
-                app.showToast("Couldn't save this radio")
+                app.fail(friendlyError(error, "Couldn't save this radio"))
             }
         }
     }

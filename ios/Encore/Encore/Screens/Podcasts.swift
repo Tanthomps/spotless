@@ -29,9 +29,12 @@ import SwiftUI
             app.downloads.remove(s.videoId)
         }
     case .none:
-        if let episode, !app.podcasts.isSaved(episode) { app.podcasts.saved.insert(episode, at: 0) }
-        app.downloads.add(DownloadCollection(id: s.videoId, kind: "episode", title: s.title, subtitle: s.artists, thumbnail: s.thumbnail),
-                          songs: [s]) { [podcasts = app.podcasts] in await podcasts.refresh() }
+        // Saved with the download (the core does both); a refused download takes the save back too.
+        let wasSaved = episode.map { app.podcasts.isSaved($0) } ?? true
+        if let episode, !wasSaved { app.podcasts.saved.insert(episode, at: 0) }
+        let t = app.downloads.add(DownloadCollection(id: s.videoId, kind: "episode", title: s.title, subtitle: s.artists, thumbnail: s.thumbnail),
+                                  songs: [s]) { [podcasts = app.podcasts] in await podcasts.refresh() }
+        Task { if await t.value == false, !wasSaved { app.podcasts.saved.removeAll { $0.id == s.videoId } } }
         Haptics.impact(.light)
         DownloadKeeper.shared.userStartedDownload(title: s.title)
     }
@@ -59,7 +62,14 @@ struct EpisodeDownloadButton: View {
         let state = app.downloads.state(episode.id)
         Button { toggleEpisodeDownload(app, episode) } label: { DownloadGlyph(state: state, size: size) }
             .buttonStyle(PressScale(scale: 0.9))
-            .accessibilityLabel(state == .none ? "Download" : state == .done ? "Remove download" : "Downloading")
+            .accessibilityLabel({
+                switch state {
+                case .none: "Download"
+                case .done: "Remove download"
+                case .downloading: "Downloading"
+                case .failed: "Download failed. Retry download"
+                }
+            }())
             .accessibilityIdentifier("episode-download")
     }
 }
@@ -137,7 +147,7 @@ struct EpisodeRow: View {
                     Haptics.impact(.light)
                     app.showToast(on ? "Added to Your Episodes" : "Removed from Your Episodes")
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Episodes" : "Add to Your Episodes")
                 EpisodeDownloadButton(episode: episode)
@@ -148,7 +158,7 @@ struct EpisodeRow: View {
                 Spacer()
                 Button(action: onPlay) {
                     Circle().fill(Color.white).frame(width: 32, height: 32)
-                        .overlay(Icon(name: isCurrent && !app.player.paused ? "pause" : "play", fill: true, size: 14).foregroundStyle(.black)
+                        .overlay(IconSwap(name: isCurrent && !app.player.paused ? "pause" : "play", fill: true, size: 14).foregroundStyle(.black)
                             .offset(x: isCurrent && !app.player.paused ? 0 : 1))
                 }
                 .buttonStyle(PressScale(scale: 0.92))
@@ -347,7 +357,7 @@ struct ShowView: View {
             if let d = show?.description, !d.isEmpty {
                 VStack(alignment: .leading, spacing: Space.s) {
                     Text("About").font(Typo.font(18, .bold))
-                    Text(d).font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(aboutExpanded ? nil : 3)
+                    Text(d).font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(aboutExpanded ? nil : 3).clipped()
                     Button(aboutExpanded ? "Show less" : "Show more") { withAnimation(Motion.quick) { aboutExpanded.toggle() } }
                         .font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
                 }
@@ -495,6 +505,7 @@ struct EpisodeView: View {
                     Text(showNotes(d)).font(Typo.font(15)).foregroundStyle(Palette.subdued)
                         .tint(Palette.text)
                         .lineLimit(notesExpanded ? nil : 8)
+                        .clipped()
                         .textSelection(.enabled)
                         .environment(\.openURL, OpenURLAction { url in
                             guard url.scheme == "encore-seek", let secs = Double(url.host ?? "") else { return .systemAction }
@@ -562,7 +573,7 @@ struct EpisodeView: View {
                     Haptics.impact(.light)
                     app.showToast(on ? "Added to Your Episodes" : "Removed from Your Episodes")
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 26).foregroundStyle(saved ? Palette.accent : Palette.subdued)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 26).foregroundStyle(saved ? Palette.accent : Palette.subdued)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Episodes" : "Add to Your Episodes")
                 if let e { EpisodeDownloadButton(episode: e, size: 26) }
@@ -649,7 +660,13 @@ struct EpisodeListView: View {
                          onShuffle: {}, onPlay: { playEpisodes(app, eps, at: 0) })
         } content: {
             LazyVStack(spacing: 0) {
-                if eps.isEmpty {
+                if eps.isEmpty && !app.podcasts.listsLoaded {
+                    if app.podcasts.listsFailed {
+                        EntityLoadState(failed: true) { app.podcasts.listsFailed = false; Task { await app.podcasts.refresh() } }
+                    } else {
+                        SkeletonRows(count: 5)
+                    }
+                } else if eps.isEmpty {
                     VStack(spacing: Space.s) {
                         Text(kind == .saved ? "Add to Your Episodes" : "No new episodes").font(Typo.font(18, .bold))
                         Text(kind == .saved ? "Save episodes to listen to later. Tap + on any episode." : "Follow shows to see their newest episodes here.")

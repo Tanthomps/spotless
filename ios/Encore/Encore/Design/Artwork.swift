@@ -49,6 +49,16 @@ actor ArtworkCache {
         return img
     }
 
+    /// Looks up art for an item that came without any (imported history, local mixes). Set by the app.
+    nonisolated(unsafe) static var resolver: ((ArtRef) async -> String?)?
+    private var resolved: [ArtRef: String?] = [:]
+    func resolve(_ r: ArtRef) async -> String? {
+        if let hit = resolved[r] { return hit }
+        let got = await Self.resolver?(r)
+        resolved[r] = got
+        return got
+    }
+
     func cached(_ url: String) -> UIImage? { images.object(forKey: (Self.stubbed && !url.hasPrefix("mfy:") ? "stub:" + url : url) as NSString) }
 
     /// The cover's raw accent colour, or nil for a greyscale cover.
@@ -128,12 +138,20 @@ func sizedArt(_ url: String?, _ px: Int) -> String? {
 }
 
 /// Square (or circular) cover with a placeholder; loads through `ArtworkCache`.
+/// What a cover belongs to, so a missing or broken thumbnail can be looked up (`ArtworkCache.resolve`).
+struct ArtRef: Hashable, Sendable {
+    let id: String
+    let title: String
+}
+
 struct ArtImage: View {
     let url: String?
     var px: Int = 544
     var radius: CGFloat = Radius.s
     var circle = false
     var placeholderIcon = "ph-music-note"
+    /// No thumbnail (or one that won't load): look the item's own art up instead of a note icon.
+    var fallback: ArtRef? = nil
     @State private var image: UIImage?
 
     var body: some View {
@@ -148,10 +166,17 @@ struct ArtImage: View {
         }
         .clipped()
         .clipShape(circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: radius, style: .continuous)))
-        .task(id: url) {
-            guard let u = sizedArt(url, px) else { image = nil; return }
-            if let hit = await ArtworkCache.shared.cached(u) { image = hit; return }
-            let img = await ArtworkCache.shared.image(u)
+        .task(id: "\(url ?? "")#\(fallback?.id ?? "")") {
+            if let u = sizedArt(url, px) {
+                if let hit = await ArtworkCache.shared.cached(u) { image = hit; return }
+                if let img = await ArtworkCache.shared.image(u) {
+                    withAnimation(.easeOut(duration: 0.15)) { image = img }
+                    return
+                }
+            }
+            guard let fallback, let found = await ArtworkCache.shared.resolve(fallback),
+                  let img = await ArtworkCache.shared.image(found.hasPrefix("mfy:") ? found : sizedArt(found, px) ?? found) else { image = nil; return }
+            guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.15)) { image = img }
         }
     }

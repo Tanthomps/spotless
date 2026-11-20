@@ -32,15 +32,37 @@ struct RootView: View {
                 .zIndex(2.5)
             NowPlayingCover()
                 .zIndex(3)
+            ArtFlightView()
+                .zIndex(3.5)
             // Above Now Playing too, so an Undo from its ··· menu is visible (Spotify shows it there).
-            if let toast = app.toast {
+            if let toast = app.toast, !(app.router.nowPlayingOpen && app.router.queueOpen) {
                 ToastView(message: toast)
                     .padding(.bottom, app.router.nowPlayingOpen ? 40 : chromeHeight(app) + 8)
-                    .transition(Motion.slide(.bottom, fade: true))
+                    .transition(Motion.toast)
                     .zIndex(4)
             }
         }
         .ignoresSafeArea(.keyboard)
+        // The play button can't spin forever: past 15 s on one track, give up and say so.
+        .task(id: app.player.loading ? app.player.now?.videoId : nil) {
+            guard app.player.loading, let id = app.player.now?.videoId else { return }
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard !Task.isCancelled, app.player.loading, app.player.now?.videoId == id else { return }
+            app.player.now?.loading = false
+            app.fail("This is taking too long. Tap play to try again.")
+        }
+        // A YouTube session that couldn't be renewed: say so once, with the way back in.
+        .onChange(of: app.account.sessionExpired) { _, ended in
+            guard ended else { return }
+            app.showToast("Your YouTube session ended. Sign in again.", action: "Sign in") {
+                app.router.dismissOverlays()
+                app.router.push(.settingsPage(.account))
+                app.account.signInOpen = true
+            }
+        }
+        .onChange(of: app.router.nowPlayingOpen && app.player.hasTrack) { _, open in
+            ArtFlight.shared.start(open: open, url: app.player.current?.thumbnail ?? app.player.now?.thumbnail)
+        }
         .sheet(item: $app.sheet) { subject in
             sheetContent(subject)
                 .modifier(SheetDetents(detents: detents(subject)))
@@ -270,7 +292,7 @@ struct ToastView: View {
     var body: some View {
         HStack(spacing: Space.m) {
             // White toast, black 14/400 text; the action ("Change") 14/700 black at the right (Spotify).
-            Text(message.text).font(Typo.font(14)).foregroundStyle(.black).lineLimit(2)
+            Text(message.text).font(Typo.font(14)).foregroundStyle(.black).lineLimit(3)
             Spacer(minLength: 0)
             if let action = message.action {
                 Text(action).font(Typo.font(14, .bold)).foregroundStyle(.black)
@@ -283,7 +305,7 @@ struct ToastView: View {
         .padding(.horizontal, Space.s)
         .onTapGesture {
             let run = message.run
-            withAnimation(Motion.quick) { app.toast = nil }
+            withAnimation(Motion.exit) { app.toast = nil }
             run?()
         }
         .accessibilityElement(children: .combine)

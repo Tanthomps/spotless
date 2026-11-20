@@ -16,7 +16,9 @@ struct HistoryView: View {
     @State private var contexts: [RecentPlayContext] = []
     @State private var showAllContexts = false
     @State private var stats: ListeningStats?
-    @State private var failed = false
+    /// Each tab fails on its own: a failed Your top doesn't hide Recents that loaded.
+    @State private var rowsFailed = false
+    @State private var statsFailed = false
 
     var body: some View {
         ScrollView {
@@ -43,9 +45,9 @@ struct HistoryView: View {
         .foregroundStyle(Palette.text)
         .chromeInset()
         .toolbar(.hidden, for: .navigationBar)
-        .task { await load() }
+        // One load at a time: a newer play cancels the one in flight instead of racing it.
+        .task(id: app.homeSerial) { await load() }
         .refreshable { await load() }
-        .onChange(of: app.homeSerial) { Task { await load() } }
     }
 
     private static let context = PlayContext(kind: .song, id: nil, title: "Recents")
@@ -77,7 +79,7 @@ struct HistoryView: View {
                 }
             }
         } else {
-            EntityLoadState(failed: failed) { Task { await load() } }
+            EntityLoadState(failed: rowsFailed) { Task { await load() } }
         }
     }
 
@@ -192,7 +194,7 @@ struct HistoryView: View {
                 }
             }
         } else {
-            EntityLoadState(failed: failed) { Task { await load() } }
+            EntityLoadState(failed: statsFailed) { Task { await load() } }
         }
     }
 
@@ -268,16 +270,12 @@ struct HistoryView: View {
     }
 
     private func load() async {
-        failed = false
-        do {
-            async let r = app.core.recentTracks(limit: 200)
-            async let c = app.core.recentPlayContexts(limit: 50)
-            async let s = app.core.listeningStats(since: Int64(Date().timeIntervalSince1970) - 28 * 86_400)
-            contexts = (try? await c) ?? contexts
-            rows = try await r
-            stats = try await s
-        } catch {
-            if rows == nil || stats == nil { failed = true }
-        }
+        rowsFailed = false; statsFailed = false
+        async let r = app.core.recentTracks(limit: 200)
+        async let c = app.core.recentPlayContexts(limit: 50)
+        async let s = app.core.listeningStats(since: Int64(Date().timeIntervalSince1970) - 28 * 86_400)
+        contexts = (try? await c) ?? contexts
+        do { rows = try await r } catch { if rows == nil && !FriendlyError.isCancellation(error) { rowsFailed = true } }
+        do { stats = try await s } catch { if stats == nil && !FriendlyError.isCancellation(error) { statsFailed = true } }
     }
 }

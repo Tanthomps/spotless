@@ -17,6 +17,60 @@ struct Icon: View {
     }
 }
 
+/// An `Icon` whose swaps blend: the old glyph shrinks to 0.8 and blurs out while the new one does
+/// the reverse, overlapping. (`.contentTransition(.symbolEffect)` does nothing on asset images.)
+struct IconSwap: View {
+    let name: String
+    var fill = false
+    var size: CGFloat = 24
+    var body: some View {
+        ZStack {
+            Icon(name: name, fill: fill, size: size)
+                .id("\(name)\(fill)")
+                .transition(Motion.reduce ? .opacity : .modifier(active: PopEffect(scale: 0.8, blur: 4, opacity: 0), identity: PopEffect(scale: 1, blur: 0, opacity: 1)))
+        }
+        .animation(.easeOut(duration: 0.18), value: "\(name)\(fill)")
+    }
+}
+
+/// Grey placeholder rows while a list loads (skeletons, never a spinner).
+struct SkeletonRows: View {
+    var count = 6
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<count, id: \.self) { i in
+                HStack(spacing: Space.m) {
+                    RoundedRectangle(cornerRadius: Radius.xs).fill(Palette.elevatedHighlight).frame(width: Metrics.rowArt, height: Metrics.rowArt)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Capsule().fill(Palette.elevatedHighlight).frame(width: 160, height: 10)
+                        Capsule().fill(Palette.elevatedHighlight).frame(width: 100, height: 8)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, Space.gutter).frame(height: Metrics.rowHeight)
+                .opacity(1 - Double(i) * 0.1)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading")
+    }
+}
+
+/// End of a paged list whose next page failed: says so and retries in place.
+struct LoadMoreFailedRow: View {
+    var text = "Couldn't load more"
+    let retry: () -> Void
+    var body: some View {
+        HStack {
+            Text(text).font(Typo.font(14)).foregroundStyle(Palette.subdued)
+            Spacer()
+            Button("Try again", action: retry).font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
+        }
+        .padding(.horizontal, Space.gutter).frame(height: 56)
+        .accessibilityIdentifier("load-more-failed")
+    }
+}
+
 /// Our own library glyph (three spines and a leaning one); Phosphor has no close match.
 struct LibraryGlyph: View {
     var filled = false
@@ -83,7 +137,7 @@ struct PlayCircleButton: View {
                     if loading {
                         ProgressView().tint(.black)
                     } else {
-                        Icon(name: playing ? "pause" : "play", fill: true, size: size * 0.42).foregroundStyle(.black)
+                        IconSwap(name: playing ? "pause" : "play", fill: true, size: size * 0.42).foregroundStyle(.black)
                             .offset(x: playing ? 0 : size * 0.03)
                     }
                 }
@@ -172,7 +226,7 @@ struct TrackRow: View {
                     }
                 }.frame(width: 24)
             }
-            if showArt { ArtImage(url: song.thumbnail, px: 144, radius: Radius.xs).frame(width: Metrics.rowArt, height: Metrics.rowArt) }
+            if showArt { ArtImage(url: song.thumbnail, px: 144, radius: Radius.xs, fallback: ArtRef(id: song.videoId, title: song.title)).frame(width: Metrics.rowArt, height: Metrics.rowArt) }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     // The playing row: equaliser before the title (rows with a number show it there instead).
@@ -448,10 +502,11 @@ struct MediaCard: View {
     var circle = false
     var size: CGFloat = Metrics.card
     var liked = false
+    var fallback: ArtRef? = nil
     var body: some View {
         VStack(alignment: circle ? .center : .leading, spacing: Space.s) {
             if liked { LikedCover(size: size) } else {
-                ArtImage(url: thumbnail, px: 360, radius: Radius.s, circle: circle).frame(width: size, height: size)
+                ArtImage(url: thumbnail, px: 360, radius: Radius.s, circle: circle, fallback: fallback).frame(width: size, height: size)
             }
             VStack(alignment: circle ? .center : .leading, spacing: 2) {
                 Text(title).font(Typo.cardTitle).foregroundStyle(Palette.text).lineLimit(circle ? 1 : 2)

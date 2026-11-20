@@ -12,13 +12,14 @@ struct DownloadButton: View {
 
     var body: some View {
         let state = app.downloads.state(item.id)
+        let paused: String? = if case .downloading = state { app.downloads.pausedReason } else { nil }
         Button {
             if case .failed = state { retryDownloads(app) } else { toggleDownload(app, item) }
         } label: {
-            DownloadGlyph(state: state, size: size)
+            DownloadGlyph(state: state, size: size, paused: paused != nil)
         }
         .buttonStyle(PressScale(scale: 0.9))
-        .accessibilityLabel(stateLabel(state))
+        .accessibilityLabel(paused.map { "Download paused. \($0)" } ?? stateLabel(state))
         .accessibilityIdentifier("download-button")
     }
 
@@ -36,6 +37,8 @@ struct DownloadButton: View {
 struct DownloadGlyph: View {
     let state: DownloadState
     var size: CGFloat = 26
+    /// Downloading but not moving (offline, waiting for Wi-Fi): a pause mark in the ring.
+    var paused = false
     var body: some View {
         Group {
             switch state {
@@ -44,7 +47,8 @@ struct DownloadGlyph: View {
             case .downloading(let f):
                 ProgressRing(fraction: f, lineWidth: 2.2)
                     .frame(width: size - 3, height: size - 3)
-                    .overlay(Image(systemName: "arrow.down").font(.system(size: size * 0.38, weight: .bold)).foregroundStyle(Palette.accent))
+                    .overlay(Image(systemName: paused ? "pause.fill" : "arrow.down").font(.system(size: size * 0.38, weight: .bold))
+                        .foregroundStyle(paused ? Palette.subdued : Palette.accent))
                     .frame(width: size, height: size)
             case .done:
                 Circle().fill(Palette.accent).frame(width: size - 2, height: size - 2)
@@ -132,7 +136,8 @@ struct CollectionDownloadGlyph: View {
                 .overlay(Image(systemName: "arrow.down").font(.system(size: 7.5, weight: .black)).foregroundStyle(.black))
                 .accessibilityLabel("Downloaded")
         case .failed:
-            Icon(name: "info", fill: true, size: 13).foregroundStyle(Palette.subdued)
+            // The row itself opens the collection; Retry lives in the list above and in Storage.
+            Icon(name: "arrow-clockwise", size: 13).foregroundStyle(Palette.subdued)
                 .accessibilityLabel("Some songs didn't download")
         }
     }

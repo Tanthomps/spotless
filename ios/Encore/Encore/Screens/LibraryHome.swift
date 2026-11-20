@@ -685,9 +685,17 @@ struct HomeView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Space.s) {
+                        // Spotify has no bell: What's New lives in the side menu, flagged by a blue dot on the avatar.
                         Avatar()
+                            .overlay(alignment: .topTrailing) {
+                                if app.settings.whatsNewCount > 0 {
+                                    Circle().fill(Palette.announcement).frame(width: 9, height: 9)
+                                        .overlay(Circle().stroke(Palette.base, lineWidth: 1.5))
+                                        .accessibilityLabel("New in What's New")
+                                }
+                            }
                         ForEach(Self.chips, id: \.self) { c in
-                            Chip(title: c, selected: c == chip) { select(c) }
+                            Chip(title: c, selected: c == chip, compact: true) { select(c) }
                                 .fixedSize()
                                 .id(c)
                                 .accessibilityIdentifier("home-chip-\(c)")
@@ -699,8 +707,6 @@ struct HomeView: View {
                 // The picked chip is always fully in view (a deep link can pick one off-screen).
                 .onChange(of: chip, initial: true) { _, c in withAnimation(Motion.quick) { proxy.scrollTo(c) } }
             }
-            WhatsNewBell()
-                .padding(.trailing, Space.gutter)
         }
     }
 
@@ -920,26 +926,6 @@ func homeBrowseItem(_ s: ShelfItem) -> BrowseItem {
 }
 
 // MARK: home additions (smart2)
-
-/// What's New: the bell in the Home header, with the blue "New" dot.
-struct WhatsNewBell: View {
-    @Environment(AppModel.self) private var app
-    var body: some View {
-        Button { app.router.push(.whatsNew) } label: {
-            Icon(name: "bell", size: 24).foregroundStyle(Palette.text)
-                .overlay(alignment: .topTrailing) {
-                    if app.settings.whatsNewCount > 0 {
-                        Circle().fill(Palette.announcement).frame(width: 9, height: 9)
-                            .overlay(Circle().stroke(Palette.base, lineWidth: 1.5))
-                            .offset(x: 1, y: -1)
-                    }
-                }
-                .frame(width: 40, height: 40)
-        }
-        .accessibilityLabel(app.settings.whatsNewCount > 0 ? "What's New, new items" : "What's New")
-        .accessibilityIdentifier("whats-new-bell")
-    }
-}
 
 struct MadeForYouShelf: View {
     @Environment(AppModel.self) private var app

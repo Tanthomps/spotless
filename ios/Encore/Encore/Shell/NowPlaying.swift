@@ -332,7 +332,7 @@ struct NowPlayingView: View {
                         app.showToast(on ? "Added to Your Episodes" : "Removed from Your Episodes")
                     }
                 } label: {
-                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 36)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 38)
                         .foregroundStyle(saved ? Palette.accent : Palette.text).pulse(on: saved)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Episodes" : "Add to Your Episodes")
@@ -340,7 +340,7 @@ struct NowPlayingView: View {
             } else if let s = song {
                 let liked = app.library.isLiked(s.videoId)
                 Button { app.likeButton(s) } label: {
-                    IconSwap(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 36)
+                    IconSwap(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 38)
                         .foregroundStyle(liked ? Palette.accent : Palette.text)
                         .pulse(on: liked)
                 }
@@ -428,7 +428,7 @@ struct NowPlayingView: View {
             .accessibilityIdentifier("np-shuffle")
             Spacer()
             Button { player.skipPrevious() } label: {
-                Icon(name: "skip-back", fill: true, size: 32).foregroundStyle(Palette.text).frame(width: 52, height: 52)
+                SkipGlyph(forward: false).foregroundStyle(Palette.text).frame(width: 52, height: 52)
             }
             .accessibilityLabel("Previous")
             Spacer()
@@ -436,7 +436,7 @@ struct NowPlayingView: View {
                 .accessibilityIdentifier("np-play")
             Spacer()
             Button { player.skipNext() } label: {
-                Icon(name: "skip-forward", fill: true, size: 32).foregroundStyle(Palette.text).frame(width: 52, height: 52)
+                SkipGlyph(forward: true).foregroundStyle(Palette.text).frame(width: 52, height: 52)
             }
             .accessibilityLabel("Next")
             .accessibilityIdentifier("np-next")

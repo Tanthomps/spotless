@@ -83,8 +83,8 @@ enum Typo {
     static let tabLabel = font(10, .medium)
     static let miniTitle = font(14, .bold)
     static let miniArtist = font(14, .regular)
-    static let npTitle = font(24, .bold)
-    static let npArtist = font(16, .regular)
+    static let npTitle = font(26, .bold)   // Spotify: 18.6 pt cap height
+    static let npArtist = font(17, .regular)
     static let time = font(11, .regular)
     static let meta = font(13, .regular)
     static let metaBold = font(13, .bold)
@@ -138,7 +138,7 @@ enum Metrics {
     static let cardSmall: CGFloat = 128
     static let playButton: CGFloat = 48
     static let npPlayButton: CGFloat = 64
-    static let searchField: CGFloat = 46
+    static let searchField: CGFloat = 48
 }
 
 /// Animations. With Reduce Motion on, springs become short fades and slides become cross-fades

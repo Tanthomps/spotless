@@ -33,6 +33,64 @@ struct IconSwap: View {
     }
 }
 
+/// Spotify's play / pause marks, drawn to their proportions of the circle (measured on the 64 pt Now
+/// Playing button: triangle 20.5 × 26 with soft corners, nudged 1/12 of its width right of centre;
+/// pause bars 6 × 22, 7 apart). Phosphor's are smaller and sit off-centre in their box.
+struct PlayPauseGlyph: View {
+    let playing: Bool
+    let size: CGFloat
+    var body: some View {
+        ZStack {
+            Canvas { ctx, sz in
+                let h = size * 0.406, w = size * 0.32, r = size * 0.03
+                let x0 = (sz.width - w) / 2 + w / 12, y0 = (sz.height - h) / 2
+                var p = Path()
+                p.move(to: CGPoint(x: x0 + r, y: y0 + r))
+                p.addLine(to: CGPoint(x: x0 + w - r, y: sz.height / 2))
+                p.addLine(to: CGPoint(x: x0 + r, y: y0 + h - r))
+                p.closeSubpath()
+                ctx.fill(p, with: .foreground)
+                ctx.stroke(p, with: .foreground, style: StrokeStyle(lineWidth: r * 2, lineJoin: .round))
+            }
+            .opacity(playing ? 0 : 1).scaleEffect(playing ? 0.8 : 1).blur(radius: playing ? 3 : 0)
+            Canvas { ctx, sz in
+                let h = size * 0.344, w = size * 0.094, gap = size * 0.11
+                let x0 = (sz.width - w * 2 - gap) / 2, y0 = (sz.height - h) / 2
+                for x in [x0, x0 + w + gap] {
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: y0, width: w, height: h), cornerRadius: size * 0.02), with: .foreground)
+                }
+            }
+            .opacity(playing ? 1 : 0).scaleEffect(playing ? 1 : 0.8).blur(radius: playing ? 0 : 3)
+        }
+        .frame(width: size, height: size)
+        .animation(Motion.reduce ? .linear(duration: 0.12) : .easeOut(duration: 0.18), value: playing)
+    }
+}
+
+/// Spotify's previous / next: a solid triangle against a bar, 23 × 22 at the 32 pt slot.
+struct SkipGlyph: View {
+    let forward: Bool
+    var size: CGFloat = 32
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = size / 32, w = 23 * s, h = 22 * s, bar = 3.2 * s, r = 1 * s
+            let x0 = (sz.width - w) / 2, y0 = (sz.height - h) / 2
+            var tri = Path()
+            tri.move(to: CGPoint(x: x0 + r, y: y0 + r))
+            tri.addLine(to: CGPoint(x: x0 + w - bar - 1 * s - r, y: sz.height / 2))
+            tri.addLine(to: CGPoint(x: x0 + r, y: y0 + h - r))
+            tri.closeSubpath()
+            var all = tri
+            all.addPath(Path(roundedRect: CGRect(x: x0 + w - bar, y: y0, width: bar, height: h), cornerRadius: s))
+            if !forward { all = all.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: sz.width, ty: 0)) }
+            ctx.fill(all, with: .foreground)
+            ctx.stroke(forward ? tri : tri.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: sz.width, ty: 0)),
+                       with: .foreground, style: StrokeStyle(lineWidth: r * 2, lineJoin: .round))
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 /// Grey placeholder rows while a list loads (skeletons, never a spinner).
 struct SkeletonRows: View {
     var count = 6
@@ -109,12 +167,14 @@ struct SearchGlyph: View {
 struct Chip: View {
     let title: String
     var selected = false
+    /// Home's tighter chips (Spotify: 13 pt text, ~11 pt sides); Library and Search keep 14/16.
+    var compact = false
     var action: () -> Void = {}
     var body: some View {
         Button(action: action) {
-            Text(title).font(Typo.chip)
+            Text(title).font(compact ? Typo.font(13, .medium) : Typo.chip)
                 .foregroundStyle(selected ? Color.black : Palette.text)
-                .padding(.horizontal, 16).frame(height: Metrics.chipHeight)
+                .padding(.horizontal, compact ? 11 : 16).frame(height: Metrics.chipHeight)
                 .background { if selected { Capsule().fill(Palette.accent) } }
                 .modifier(GlassCapsule(on: !selected))
         }
@@ -130,7 +190,7 @@ struct GlassCapsule: ViewModifier {
         if !on {
             content
         } else if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: Capsule())
+            content.glassEffect(.regular.interactive(), in: Capsule())
         } else {
             content
                 .background(Capsule().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
@@ -176,8 +236,7 @@ struct PlayCircleButton: View {
                     if loading {
                         ProgressView().tint(.black)
                     } else {
-                        IconSwap(name: playing ? "pause" : "play", fill: true, size: size * 0.42).foregroundStyle(.black)
-                            .offset(x: playing ? 0 : size * 0.03)
+                        PlayPauseGlyph(playing: playing, size: size).foregroundStyle(.black)
                     }
                 }
         }

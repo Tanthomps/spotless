@@ -83,8 +83,7 @@ struct SearchView: View {
 
     @ViewBuilder private var tiles: some View {
         VStack(alignment: .leading, spacing: Space.m) {
-            Text("Start browsing").font(Typo.font(16, .bold)).padding(.top, Space.m)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: Space.s), GridItem(.flexible(), spacing: Space.s)], spacing: Space.s) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: Space.l), GridItem(.flexible(), spacing: Space.l)], spacing: Space.l) {
                 ForEach(start, id: \.key) { t in
                     Button {
                         if let r = t.route { app.router.push(r) } else { app.router.select(.home); app.router.homeChip = t.title }
@@ -97,7 +96,7 @@ struct SearchView: View {
             }
             let all = moods.flatMap(\.items)
             if !all.isEmpty {
-                Text("Browse all").font(Typo.font(16, .bold)).padding(.top, Space.m)
+                Text("Browse all").font(Typo.font(22, .bold)).padding(.top, Space.l)
                 grid(all, offset: 0, tall: true)
             }
         }
@@ -105,7 +104,7 @@ struct SearchView: View {
     }
 
     private func grid(_ items: [Mood], offset: Int, tall: Bool) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: Space.s), GridItem(.flexible(), spacing: Space.s)], spacing: Space.s) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: Space.l), GridItem(.flexible(), spacing: Space.l)], spacing: Space.l) {
             ForEach(Array(items.enumerated()), id: \.element.params) { i, m in
                 Button { app.router.push(.mood(m.params, m.title)) } label: {
                     // Our tile palette (`BrowseTiles`); YouTube's own mood colours are pastels.
@@ -144,24 +143,24 @@ struct BrowseTile: View {
             RoundedRectangle(cornerRadius: Radius.s + 2, style: .continuous).fill(color)
             if let art {
                 ArtImage(url: art, px: 200, radius: Radius.s)
-                    .frame(width: tall ? 64 : 44, height: tall ? 64 : 44)
+                    .frame(width: 64, height: 64)
                     .rotationEffect(.degrees(25))
                     .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .offset(x: tall ? 14 : 8, y: tall ? 6 : 8)
+                    .offset(x: 12, y: tall ? 6 : 10)
             }
-            Text(title).font(Typo.font(16, .bold)).foregroundStyle(.white).lineLimit(2)
-                .padding(Space.m).frame(maxWidth: 130, alignment: .leading)
+            Text(title).font(Typo.font(17, .bold)).foregroundStyle(.white).lineLimit(2)
+                .padding(.leading, 9).padding(.top, 10).frame(maxWidth: 140, alignment: .leading)
         }
-        .frame(height: tall ? 96 : 58)
+        // Spotify: 70 pt category tiles up top, 96 pt genre tiles under Browse all.
+        .frame(height: tall ? 96 : 70)
         .clipShape(RoundedRectangle(cornerRadius: Radius.s + 2, style: .continuous))
     }
 }
 
 // MARK: focused search
 
-/// Our own placeholder (Spotify's wording is theirs).
-let searchPrompt = "Songs, artists or podcasts"
+let searchPrompt = "What do you want to listen to?"
 
 struct SearchFocusView: View {
     @Environment(AppModel.self) private var app

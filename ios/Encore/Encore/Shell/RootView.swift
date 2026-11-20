@@ -168,11 +168,17 @@ struct RootView: View {
 }
 
 /// Dark glass behind sheets: the page blurs through, tinted near #1f1f1f so rows stay legible.
+/// Spotify's sheets are frosted glass, not grey: what's behind shows faintly through the blur, and
+/// the edge carries a lit hairline that fades down the sides. Every floating sheet uses this.
 struct SheetGlass: View {
+    var radius: CGFloat = Radius.glassSheet
     var body: some View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
-            Color(hex: "#1c1c1c").opacity(0.78)
+            Color(hex: "#161616").opacity(0.55)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [.white.opacity(0.2), .white.opacity(0.06), .clear],
+                                             startPoint: .top, endPoint: .center), lineWidth: 1)
         }
         .environment(\.colorScheme, .dark)
     }

@@ -141,11 +141,19 @@ final class DownloadStore {
         guard let c = snapshot.collections.first(where: { $0.id == collectionId }) else { return .none }
         if c.total > 0 && c.done >= c.total { return .done }
         if c.failed > 0 && c.done + c.failed >= c.total { return .failed(c.failed) }
-        // Finished tracks plus a share of the bytes in flight (downloads.md).
-        let inflight = active.values.reduce(0.0) { $0 + ($1.total > 0 ? $1.done / $1.total : 0) }
+        // Finished tracks plus a share of the bytes in flight (downloads.md): only this one's own songs.
+        let inflight = active.values
+            .filter { $0.collections?.contains(collectionId) ?? true }
+            .reduce(0.0) { $0 + ($1.total > 0 ? $1.done / $1.total : 0) }
         let f = c.total == 0 ? 0 : min(0.99, (Double(c.done) + min(inflight, 3) * 0.5) / Double(c.total))
         return .downloading(f)
     }
+
+    /// Out of space: what stops this download (and the Storage page says the same).
+    func storageFull(_ collectionId: String) -> Bool {
+        snapshot.collections.first { $0.id == collectionId }?.storageFull == true
+    }
+    var anyStorageFull: Bool { snapshot.collections.contains { $0.storageFull == true } }
 
     func isCollectionDownloaded(_ id: String) -> Bool { snapshot.collections.contains { $0.id == id } }
 

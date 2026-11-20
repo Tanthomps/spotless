@@ -343,8 +343,10 @@ private struct StorageSettings: View {
         }
         .padding(.horizontal, Space.gutter).padding(.top, Space.xl)
         SettingsHeader(title: "Downloads")
-        SettingsNote(text: "\(app.downloads.snapshot.count) songs and episodes, \(fmt(dl)).")
-        if let why = app.downloads.pausedReason { SettingsNote(text: "Downloads are paused: \(why.lowercased()).") }
+        SettingsNote(text: "\(counted(app.downloads.snapshot.count, "song or episode", "songs and episodes")), \(fmt(dl)).")
+        if app.downloads.anyStorageFull {
+            SettingsNote(text: "Your iPhone is out of space, so some downloads couldn't finish. Free up space, then tap Retry.")
+        } else if let why = app.downloads.pausedReason { SettingsNote(text: "Downloads are paused: \(why.lowercased()).") }
         DownloadsRetryRow()
         actionButton("Remove all downloads") {
             app.confirm = ConfirmRequest(title: "Remove all downloads?", message: "You won't be able to play them offline.", action: "Remove") {

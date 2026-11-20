@@ -160,11 +160,19 @@ final class DeviceSyncStore {
         peersAtStart = status.peers.count
         pairedAtStart = status.paired
         busy = true
+        // ponytail: 20 s for the core to open the pairing port; a slower answer is ignored (and cancelled).
+        let timeout = Task {
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled, self.step == .showCode, self.shown == nil, self.busy else { return }
+            self.busy = false
+            self.error = PairingError.from("unreachable")
+            Haptics.error()
+        }
         Task {
-            defer { busy = false }
+            defer { busy = false; timeout.cancel() }
             do {
                 let p = try await core.syncStartPairing()
-                guard step == .showCode else { _ = try? await core.syncCancelPairing(); return }
+                guard step == .showCode, error == nil else { _ = try? await core.syncCancelPairing(); return }
                 shown = p.pairing
                 advertiser.start(dev: status.deviceId.isEmpty ? UUID().uuidString : status.deviceId, port: p.port)
                 // The status that carries this code (events may have raced the answer).

@@ -22,6 +22,7 @@ struct EncoreApp: App {
                 }
             }
             .overlay { LaunchCover() }
+            .dynamicTypeSize(...Typo.maxTextSize)
         }
     }
 }

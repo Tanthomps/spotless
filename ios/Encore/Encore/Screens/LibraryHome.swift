@@ -66,11 +66,11 @@ struct LibItem: Identifiable, Hashable {
         let me = app.localUser
         // Recents: the core's play record, an own playlist's last edit (adding songs, renaming) and
         // local touches (a like moves Liked Songs; starting a context moves it before the core says so).
-        var out: [LibItem] = [LibItem(id: likedPlaylistId, kind: .playlist, title: "Liked Songs", subtitle: "Playlist • \(lib.likedIds.count) \(lib.likedIds.count == 1 ? "song" : "songs")",
+        var out: [LibItem] = [LibItem(id: likedPlaylistId, kind: .playlist, title: "Liked Songs", subtitle: "Playlist • \(counted(lib.likedIds.count, "song"))",
                                       thumbnail: nil, pinned: pins.contains(likedPlaylistId), added: .greatestFiniteMagnitude,
                                       played: lib.recentsKey(likedPlaylistId), creator: me, byYou: true)]
         for f in s.folders ?? [] {
-            out.append(LibItem(id: f.id, kind: .playlist, title: f.name, subtitle: "Folder • \(f.items.count) playlist\(f.items.count == 1 ? "" : "s")",
+            out.append(LibItem(id: f.id, kind: .playlist, title: f.name, subtitle: "Folder • \(counted(f.items.count, "playlist"))",
                                pinned: pins.contains(f.id), added: f.createdAt, played: lib.recentsKey(f.id, base: f.updatedAt), creator: me, row: .folder, byYou: true))
         }
         out += s.playlists.enumerated().map { i, p in

@@ -171,7 +171,7 @@ struct SettingsView: View {
                 HStack(spacing: Space.m) {
                     ProfileAvatar(size: 56)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(app.localUser).font(Typo.font(18, .bold))
+                        Text(app.localUser).font(Typo.font(18, .bold)).lineLimit(1)
                         Text(profileSubtitle(app)).font(Typo.font(13)).foregroundStyle(Palette.subdued)
                     }
                     Spacer()
@@ -236,7 +236,7 @@ struct SideMenu: View {
             HStack(spacing: Space.m) {
                 ProfileAvatar(size: 48)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(app.localUser).font(Typo.font(18, .bold))
+                    Text(app.localUser).font(Typo.font(18, .bold)).lineLimit(1)
                     Text(profileSubtitle(app)).font(Typo.font(13)).foregroundStyle(Palette.subdued)
                 }
                 Spacer()

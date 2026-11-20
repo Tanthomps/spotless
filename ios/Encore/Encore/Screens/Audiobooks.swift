@@ -222,9 +222,11 @@ struct AudiobookView: View {
                 .accessibilityIdentifier("book-save")
                 // Same toggle as albums: progress ring while it downloads, paused look, Retry on failures.
                 let dl = book.map { app.downloads.state("abook:\($0.id)") } ?? .none
-                let paused: String? = if case .downloading = dl { app.downloads.pausedReason } else { nil }
+                let full = book.map { app.downloads.storageFull("abook:\($0.id)") } ?? false
+                let paused: String? = full ? "Not enough storage" : { if case .downloading = dl { app.downloads.pausedReason } else { nil } }()
                 Button {
                     guard let page else { return }
+                    if full { return storageFullToast(app) }
                     if case .failed = dl { retryDownloads(app) } else { toggleBookDownload(app, page) }
                 } label: {
                     DownloadGlyph(state: downloaded && dl == .none ? .downloading(0) : dl, size: 28, paused: paused != nil)

@@ -62,6 +62,7 @@ struct EditPlaylistSheet: View {
                         .listRowBackground(Palette.sheet)
                         .listRowSeparator(.hidden)
                     TextField("Playlist name", text: $name)
+                        .onChange(of: name) { _, n in if n.count > 100 { name = String(n.prefix(100)) } }
                         .font(Typo.font(22, .bold))
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("edit-name")

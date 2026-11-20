@@ -12,8 +12,10 @@ struct DownloadButton: View {
 
     var body: some View {
         let state = app.downloads.state(item.id)
-        let paused: String? = if case .downloading = state { app.downloads.pausedReason } else { nil }
+        let full = app.downloads.storageFull(item.id)
+        let paused: String? = full ? "Not enough storage" : { if case .downloading = state { app.downloads.pausedReason } else { nil } }()
         Button {
+            if full { storageFullToast(app); return }
             if case .failed = state { retryDownloads(app) } else { toggleDownload(app, item) }
         } label: {
             DownloadGlyph(state: state, size: size, paused: paused != nil)
@@ -59,6 +61,14 @@ struct DownloadGlyph: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: state)
+    }
+}
+
+/// Out of space: say so, with the way to free some (Settings › Storage).
+@MainActor func storageFullToast(_ app: AppModel) {
+    app.showToast("Not enough storage to finish this download", action: "Storage") {
+        app.router.dismissOverlays()
+        app.router.push(.settingsPage(.storage))
     }
 }
 

@@ -65,7 +65,10 @@ enum Palette {
 /// Figtree (OFL) stands in for Spotify Mix; static instances bundled from the desktop's fontsource files.
 enum Typo {
     enum Weight: String { case regular = "Regular", medium = "Medium", semibold = "SemiBold", bold = "Bold", extraBold = "ExtraBold", black = "Black" }
-    static func font(_ size: CGFloat, _ w: Weight = .regular) -> Font { .custom("Figtree-\(w.rawValue)", fixedSize: size) }
+    /// Follows the iPhone's text size (relative to body); the app root caps it at `maxTextSize` so the
+    /// fixed-height rows, mini player and tab bar still hold their text.
+    static func font(_ size: CGFloat, _ w: Weight = .regular) -> Font { .custom("Figtree-\(w.rawValue)", size: size, relativeTo: .body) }
+    static let maxTextSize: DynamicTypeSize = .xLarge
 
     // roles (pt), iOS scale: tokens-ios.json
     static let largeTitle = font(24, .bold)        // "Search", "Your Library" header
@@ -90,6 +93,11 @@ enum Typo {
     static let sheetItem = font(16, .regular)
     static let lyricsCard = font(22, .bold)
     static let lyricsFull = font(26, .bold)
+}
+
+/// A count with its noun, right at 1 and grouped for big numbers ("1 song", "12,480 songs").
+func counted(_ n: Int, _ one: String, _ many: String? = nil) -> String {
+    "\(n.formatted()) \(n == 1 ? one : many ?? one + "s")"
 }
 
 enum Space {

@@ -49,12 +49,12 @@ struct ActionSheet: View {
                                         Text(sub).font(Typo.font(14)).foregroundStyle(Palette.subdued).multilineTextAlignment(.leading)
                                     }
                                 } else if let checked = r.checked {
-                                    Text(r.title).font(Typo.sheetItem).foregroundStyle(checked ? Palette.accentText : Palette.text)
+                                    Text(r.title).font(Typo.sheetItem).lineLimit(2).foregroundStyle(checked ? Palette.accentText : Palette.text)
                                     Spacer()
                                     if checked { Icon(name: "check", size: 20).foregroundStyle(Palette.accent) }
                                 } else {
                                     Icon(name: r.icon, fill: r.fill, size: 24).foregroundStyle(r.tint == Palette.text ? Palette.subdued : r.tint)
-                                    Text(r.title).font(Typo.sheetItem).foregroundStyle(Palette.text)
+                                    Text(r.title).font(Typo.sheetItem).lineLimit(2).foregroundStyle(Palette.text)
                                 }
                                 Spacer()
                             }

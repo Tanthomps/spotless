@@ -377,10 +377,23 @@ impl Manager {
         v
     }
 
+    /// Each running track with the collections it belongs to, so a collection's ring only counts
+    /// its own songs' bytes.
     fn progress(&self) -> Vec<serde_json::Value> {
-        let r = self.running.lock().unwrap_or_else(|e| e.into_inner());
-        r.iter()
-            .map(|(id, p)| serde_json::json!({ "videoId": id, "done": p.done, "total": p.total }))
+        let running: Vec<(String, f64, f64)> = {
+            let r = self.running.lock().unwrap_or_else(|e| e.into_inner());
+            r.iter().map(|(id, p)| (id.clone(), p.done as f64, p.total as f64)).collect()
+        };
+        if running.is_empty() {
+            return vec![];
+        }
+        let conn = self.state.db.conn();
+        running
+            .into_iter()
+            .map(|(id, done, total)| {
+                let collections = store::collections_of(&conn, &id);
+                serde_json::json!({ "videoId": id, "done": done, "total": total, "collections": collections })
+            })
             .collect()
     }
 

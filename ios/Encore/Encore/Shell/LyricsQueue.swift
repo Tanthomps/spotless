@@ -587,7 +587,7 @@ struct QueueView: View {
                     selection = []
                     // ponytail: Undo puts them back right after the current song, not at their old spots.
                     let removed = songs
-                    app.showToast(removed.count == 1 ? "Removed from queue" : "Removed \(removed.count) songs", action: "Undo") {
+                    app.showToast(removed.count == 1 ? "Removed from queue" : "Removed \(counted(removed.count, "song"))", action: "Undo") {
                         app.player.playNext(removed)
                     }
                 }

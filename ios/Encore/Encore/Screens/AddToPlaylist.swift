@@ -194,7 +194,7 @@ struct AddToPlaylistSheet: View {
 
     private var allRows: [PickerRow] {
         let liked = PickerRow(id: likedPlaylistId, title: "Liked Songs",
-                              subtitle: app.library.likedIds.count == 1 ? "1 song" : "\(app.library.likedIds.count) songs", art: nil)
+                              subtitle: counted(app.library.likedIds.count, "song"), art: nil)
         let lib = app.library
         var lists = lib.snapshot.playlists.map {
             (lib.recentsKey($0.id, base: $0.updatedAt), PickerRow(id: $0.id, title: $0.name, subtitle: $0.count == 1 ? "1 song" : "\($0.count) songs", art: $0.cover ?? $0.thumbnail))

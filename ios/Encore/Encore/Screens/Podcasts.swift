@@ -655,7 +655,7 @@ struct EpisodeListView: View {
         EntityScaffold(title: title, artURL: nil, fixedTint: tint, isPlayingThis: eps.contains { $0.id == app.player.now?.videoId },
                        onPlay: { playEpisodes(app, eps, at: 0) }) { off in
             EntityHeader(offset: off, cover: AnyView(EpisodeListTile(kind: kind, size: 240)), title: title,
-                         meta: kind == .saved ? "\(eps.count) episodes" : "Episodes from the shows you follow",
+                         meta: kind == .saved ? counted(eps.count, "episode") : "Episodes from the shows you follow",
                          actions: AnyView(EmptyView()), playing: eps.contains { $0.id == app.player.now?.videoId } && !app.player.paused,
                          onShuffle: {}, onPlay: { playEpisodes(app, eps, at: 0) })
         } content: {

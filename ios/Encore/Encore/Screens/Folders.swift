@@ -170,6 +170,7 @@ struct NameSheet: View {
                 .font(Typo.font(24, .bold)).multilineTextAlignment(.center)
             VStack(spacing: 6) {
                 TextField("", text: $name)
+                    .onChange(of: name) { _, n in if n.count > 100 { name = String(n.prefix(100)) } }
                     .font(Typo.font(34, .bold)).multilineTextAlignment(.center)
                     .focused($focused).submitLabel(.done).onSubmit(create)
                     .tint(Palette.accent)

@@ -936,7 +936,7 @@ private struct ImportDoneStep: View {
 
 /// A Done row's line. A playlist imported before got the new songs only (`updated`).
 func resultLine(_ r: ImportResult) -> String {
-    if r.kind == "history" { return "\(r.added) plays in Recently played" }
+    if r.kind == "history" { return "\(counted(r.added, "play")) in Recently played" }
     if r.kind == "liked", r.added == 0 { return "Already in your Liked Songs" }
     let songs = "\(r.added) song\(r.added == 1 ? "" : "s")"
     let head = r.updated == true ? "Already imported • \(r.added) new song\(r.added == 1 ? "" : "s")" : songs

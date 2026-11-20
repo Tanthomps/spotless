@@ -76,6 +76,8 @@ pub struct CollectionStatus {
     pub failed: i64,
     pub bytes: i64,
     pub added_at: i64,
+    /// A song in it couldn't be written because the phone is out of space.
+    pub storage_full: bool,
 }
 
 /// A track nothing holds any more: its row is gone, its files are the caller's to delete.
@@ -378,13 +380,22 @@ pub fn mark_missing(conn: &Connection, id: &str) {
     );
 }
 
+/// The collections holding a track (one song can be in an album and a playlist both).
+pub fn collections_of(conn: &Connection, video_id: &str) -> Vec<String> {
+    let Ok(mut st) = conn.prepare_cached("SELECT collection_id FROM dl_members WHERE video_id = ?1") else {
+        return vec![];
+    };
+    st.query_map([video_id], |r| r.get(0)).map(|rows| rows.flatten().collect()).unwrap_or_default()
+}
+
 pub fn statuses(conn: &Connection) -> Vec<CollectionStatus> {
     let Ok(mut st) = conn.prepare(
         "SELECT c.id, c.kind, c.title, c.subtitle, c.thumbnail, c.added_at,
              COUNT(m.video_id),
              COALESCE(SUM(t.state = 'done'), 0),
              COALESCE(SUM(t.state = 'failed'), 0),
-             COALESCE(SUM(CASE WHEN t.state = 'done' THEN t.bytes ELSE 0 END), 0)
+             COALESCE(SUM(CASE WHEN t.state = 'done' THEN t.bytes ELSE 0 END), 0),
+             COALESCE(MAX(t.state != 'done' AND t.error = 'storage_full'), 0)
          FROM dl_collections c
          LEFT JOIN dl_members m ON m.collection_id = c.id
          LEFT JOIN dl_tracks t ON t.video_id = m.video_id
@@ -404,6 +415,7 @@ pub fn statuses(conn: &Connection) -> Vec<CollectionStatus> {
             done: r.get(7)?,
             failed: r.get(8)?,
             bytes: r.get(9)?,
+            storage_full: r.get::<_, i64>(10)? != 0,
         })
     })
     .map(|rows| rows.flatten().collect())
@@ -535,6 +547,23 @@ mod tests {
         let ids: Vec<_> = next_jobs(&c, 111, 5, &HashSet::new()).into_iter().map(|j| j.video_id).collect();
         assert!(ids.contains(&"a2".to_string()));
         assert_eq!(next_jobs(&c, 111, 0, &HashSet::new()).len(), 0);
+    }
+
+    #[test]
+    fn full_disk_flags_its_collection_and_members_list_their_collections() {
+        let c = db();
+        upsert_collection(&c, &coll("A", "playlist"), 1).unwrap();
+        upsert_collection(&c, &coll("B", "album"), 1).unwrap();
+        set_members(&c, "A", &[s("a")], 1).unwrap();
+        set_members(&c, "B", &[s("a"), s("b")], 1).unwrap();
+        assert!(!statuses(&c).iter().any(|x| x.storage_full));
+        mark_retry(&c, "b", super::super::fetch::STORAGE_FULL, 1);
+        let st = statuses(&c);
+        assert!(st.iter().find(|x| x.id == "B").unwrap().storage_full);
+        assert!(!st.iter().find(|x| x.id == "A").unwrap().storage_full);
+        let mut of_a = collections_of(&c, "a");
+        of_a.sort();
+        assert_eq!(of_a, vec!["A".to_string(), "B".to_string()]);
     }
 
     #[test]

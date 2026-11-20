@@ -581,12 +581,12 @@ final class AppModel {
     func playNext(_ songs: [SongItem], from: String? = nil) {
         let t = player.playNext(songs, from: from)
         Haptics.impact(.medium)
-        Task { if await t.value { showToast(songs.count == 1 ? "Playing next" : "Playing \(songs.count) songs next") } }
+        Task { if await t.value { showToast(songs.count == 1 ? "Playing next" : "Playing \(counted(songs.count, "song")) next") } }
     }
 
     func queue(_ songs: [SongItem], from: String? = nil) {
         let t = player.addToQueue(songs, from: from)
-        Task { if await t.value { showToast(songs.count == 1 ? "Added to queue" : "Added \(songs.count) songs to queue") } }
+        Task { if await t.value { showToast(songs.count == 1 ? "Added to queue" : "Added \(counted(songs.count, "song")) to queue") } }
     }
 }
 

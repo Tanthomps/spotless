@@ -571,7 +571,7 @@ private struct LinkedStep: View {
                     Text(names).font(Typo.font(15, .bold))
                 }
                 .padding(.horizontal, Space.l).padding(.vertical, Space.s)
-                .background(Capsule().fill(Palette.highlight))
+                .glassCapsule()
                 .padding(.top, Space.xl)
             }
             Spacer(minLength: Space.xl)

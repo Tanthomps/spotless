@@ -271,7 +271,7 @@ struct AudiobookView: View {
                         HStack(spacing: Space.s) {
                             ForEach((book?.genres ?? []) + [book?.language ?? "", "Public domain • LibriVox"].filter { !$0.isEmpty }, id: \.self) { g in
                                 Text(g).font(Typo.font(13)).padding(.horizontal, 12).frame(height: 30)
-                                    .background(Capsule().fill(Color(hex: "#2a2a2a")))
+                                    .glassCapsule()
                             }
                         }
                     }

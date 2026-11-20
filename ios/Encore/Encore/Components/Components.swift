@@ -72,19 +72,35 @@ struct LoadMoreFailedRow: View {
 }
 
 /// Our own library glyph (three spines and a leaning one); Phosphor has no close match.
+/// Spotify's current Your Library glyph: two upright bars and a book standing beside them; the book
+/// fills when the tab is selected.
 struct LibraryGlyph: View {
     var filled = false
     var size: CGFloat = 24
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
-            let w: CGFloat = filled ? 2.6 : 2
-            for x in [4.0, 9.0] {
-                ctx.fill(Path(roundedRect: CGRect(x: x * s, y: 3 * s, width: w * s, height: 18 * s), cornerRadius: 1 * s), with: .foreground)
+            for x in [3.0, 8.0] {
+                ctx.fill(Path(roundedRect: CGRect(x: x * s, y: 3 * s, width: 2 * s, height: 18 * s), cornerRadius: 1 * s), with: .foreground)
             }
-            var lean = Path(roundedRect: CGRect(x: 0, y: 0, width: w * s, height: 18.5 * s), cornerRadius: 1 * s)
-            lean = lean.applying(CGAffineTransform(rotationAngle: -.pi / 9).concatenating(CGAffineTransform(translationX: 13.5 * s, y: 3.6 * s)))
-            ctx.fill(lean, with: .foreground)
+            let book = Path(roundedRect: CGRect(x: 13 * s, y: 3 * s, width: 8 * s, height: 18 * s), cornerRadius: 1.5 * s)
+            if filled { ctx.fill(book, with: .foreground) }
+            else { ctx.stroke(book.strokedPath(StrokeStyle(lineWidth: 2 * s)), with: .foreground) }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// Search glyph: a ring and handle that thicken when the tab is selected (Spotify), never a filled lens.
+struct SearchGlyph: View {
+    var bold = false
+    var size: CGFloat = 24
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = sz.width / 24, w = (bold ? 2.8 : 2) * s
+            var p = Path(ellipseIn: CGRect(x: 3 * s, y: 3 * s, width: 15 * s, height: 15 * s))
+            p.move(to: CGPoint(x: 15.6 * s, y: 15.6 * s)); p.addLine(to: CGPoint(x: 21 * s, y: 21 * s))
+            ctx.stroke(p, with: .foreground, style: StrokeStyle(lineWidth: w, lineCap: .round))
         }
         .frame(width: size, height: size)
     }
@@ -99,10 +115,33 @@ struct Chip: View {
             Text(title).font(Typo.chip)
                 .foregroundStyle(selected ? Color.black : Palette.text)
                 .padding(.horizontal, 16).frame(height: Metrics.chipHeight)
-                .background(Capsule().fill(selected ? Palette.accent : Color(hex: "#2a2a2a")))
+                .background { if selected { Capsule().fill(Palette.accent) } }
+                .modifier(GlassCapsule(on: !selected))
         }
         .buttonStyle(PressScale())
     }
+}
+
+/// Spotify's iOS 26 pills: Liquid Glass (dark, with a lit rim), not a flat grey fill. Before iOS 26,
+/// a material with a top-lit hairline stands in.
+struct GlassCapsule: ViewModifier {
+    var on = true
+    func body(content: Content) -> some View {
+        if !on {
+            content
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: Capsule())
+        } else {
+            content
+                .background(Capsule().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
+                .overlay(Capsule().strokeBorder(LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.05)],
+                                                               startPoint: .top, endPoint: .bottom), lineWidth: 1))
+        }
+    }
+}
+
+extension View {
+    func glassCapsule() -> some View { modifier(GlassCapsule()) }
 }
 
 /// Press feedback by scale alone (play buttons keep their colour).

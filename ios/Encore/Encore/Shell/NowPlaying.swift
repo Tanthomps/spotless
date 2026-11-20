@@ -206,7 +206,7 @@ struct NowPlayingView: View {
                     if let pill {
                         Text(pill).font(Typo.font(13, .semibold)).foregroundStyle(Palette.text)
                             .padding(.horizontal, 12).frame(height: 30)
-                            .background(Capsule().fill(Color(hex: "#2a2a2a")))
+                            .glassCapsule()
                             .offset(y: -40)
                             .transition(Motion.pop)
                             .accessibilityIdentifier("np-pill")

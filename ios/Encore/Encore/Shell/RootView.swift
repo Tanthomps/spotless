@@ -265,12 +265,12 @@ struct TabBar: View {
                         Group {
                             switch tab {
                             case .home: Icon(name: "house", fill: selected, size: Metrics.tabIcon)
-                            case .search: Icon(name: "magnifying-glass", fill: selected, size: Metrics.tabIcon)
+                            case .search: SearchGlyph(bold: selected, size: Metrics.tabIcon)
                             case .library: LibraryGlyph(filled: selected, size: Metrics.tabIcon)
                             case .create: Icon(name: "plus", size: Metrics.tabIcon)
                             }
                         }
-                        Text(tab.title).font(Typo.tabLabel).lineLimit(1)
+                        Text(tab.title).font(Typo.font(11, selected ? .semibold : .medium)).lineLimit(1)
                     }
                     .foregroundStyle(selected ? Palette.text : Palette.subdued)
                     .frame(maxWidth: .infinity)

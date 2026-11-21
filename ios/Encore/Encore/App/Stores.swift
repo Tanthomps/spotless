@@ -83,13 +83,18 @@ final class PlayerStore {
         tapped(song.videoId)
         actions.run("play", "Couldn't play this song") { [core] in try await core.playSingle(song, from: from) }
     }
+    /// In someone else's Jam, play/pause and skips go to the host (App/JamCollabStores.swift);
+    /// answering true means it was sent there instead of done here.
+    @ObservationIgnored var remote: ((String) -> Bool)?
+
     func togglePause() {
+        if remote?(paused ? "play" : "pause") == true { return }
         let was = paused
         paused.toggle()
         actions.run("pause", was ? "Couldn't play this" : "Couldn't pause", revert: { [weak self] in self?.paused = was }) { [core] in try await core.togglePause() }
     }
-    func skipNext() { lastDirection = 1; actions.run("skip", "Couldn't skip this song") { [core] in try await core.nextTrack() } }
-    func skipPrevious() { lastDirection = -1; actions.run("skip", "Couldn't go back") { [core] in try await core.prevTrack() } }
+    func skipNext() { if remote?("next") == true { return }; lastDirection = 1; actions.run("skip", "Couldn't skip this song") { [core] in try await core.nextTrack() } }
+    func skipPrevious() { if remote?("prev") == true { return }; lastDirection = -1; actions.run("skip", "Couldn't go back") { [core] in try await core.prevTrack() } }
     func seek(_ t: Double) {
         let was = position
         position = t
@@ -305,6 +310,8 @@ struct ConfirmRequest: Identifiable {
     var title: String
     var message: String?
     var action: String
+    /// Red for deleting and the like; a plain button for joining, inviting, etc.
+    var destructive = true
     var run: () -> Void
 }
 

@@ -17,7 +17,10 @@ final class DeviceSyncStore {
     let core: CoreClient
     var status = SyncStatus.unlinked
     /// Linked devices playing something right now (Spotify's "Playing on <device>").
-    var remotes: [RemoteDevice] = []
+    var remotes: [RemoteDevice] = [] { didSet { sending = [] } }
+    /// Devices a command was just sent to; cleared when they answer with a presence (or after 8 s),
+    /// so the bar can say "Sending to …" through the sync round's few seconds.
+    var sending: Set<String> = []
     /// The one to show: playing first, then the freshest.
     var activeRemote: RemoteDevice? { remotes.first { $0.playing } ?? remotes.first }
 
@@ -92,9 +95,17 @@ final class DeviceSyncStore {
 
     /// play / pause / next / prev on another device; shown at once, confirmed by its next presence.
     func control(_ d: RemoteDevice, _ cmd: String) {
-        if let i = remotes.firstIndex(where: { $0.dev == d.dev }), cmd == "play" || cmd == "pause" { remotes[i].playing = cmd == "play" }
+        if let i = remotes.firstIndex(where: { $0.dev == d.dev }), cmd == "play" || cmd == "pause" {
+            var r = remotes; r[i].playing = cmd == "play"
+            remotes = r // (clears `sending`; it's set again right below)
+        }
         Haptics.selection()
-        Task { try? await core.presenceSend(dev: d.dev, cmd: cmd) }
+        sending.insert(d.dev)
+        Task {
+            try? await core.presenceSend(dev: d.dev, cmd: cmd)
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            sending.remove(d.dev)
+        }
     }
 
     func apply(_ s: SyncStatus) {

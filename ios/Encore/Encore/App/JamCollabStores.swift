@@ -32,7 +32,8 @@ struct WireSong: Codable, Equatable, Hashable {
     let id: String
     let key: SymmetricKey
     let me: String
-    var onMessage: ([String: Any]) -> Void = { _ in }
+    /// (message, sender id) for every message from someone else.
+    var onMessage: ([String: Any], String) -> Void = { _, _ in }
     var onState: (Bool) -> Void = { _ in }
     /// The last relay message id seen, so a reconnect (or a relaunch) carries on from there.
     var onCursor: (Int) -> Void = { _ in }
@@ -122,10 +123,10 @@ struct WireSong: Codable, Equatable, Hashable {
     private func handle(_ s: String) {
         guard let o = try? JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any], o["type"] as? String == "msg" else { return }
         if let n = o["id"] as? Int, n > lastId { lastId = n; onCursor(n) }
-        guard (o["from"] as? String) != me, let box = o["box"] as? String, let data = Data(base64Encoded: box),
+        guard let from = o["from"] as? String, from != me, let box = o["box"] as? String, let data = Data(base64Encoded: box),
               let sealed = try? AES.GCM.SealedBox(combined: data), let plain = try? AES.GCM.open(sealed, using: key),
               let msg = try? JSONSerialization.jsonObject(with: plain) as? [String: Any] else { return }
-        onMessage(msg)
+        onMessage(msg, from)
     }
 
     /// Seal and send; `snap` marks a message new members start from (Jam state, playlist snapshot).
@@ -289,11 +290,20 @@ enum ShareIdentity {
         sheetOpen = true
     }
 
-    private func guestHandle(_ m: [String: Any]) {
+    /// The host is whoever sent the channel's first state (the backlog starts with it); state and
+    /// "end" from anyone else, another guest pretending, are dropped.
+    @ObservationIgnored private var hostFrom: String?
+
+    private func guestHandle(_ m: [String: Any], from: String) {
         guard let app else { return }
-        switch m["t"] as? String {
+        let t = m["t"] as? String
+        if t == "state" || t == "end" {
+            if hostFrom == nil, t == "state" { hostFrom = from }
+            guard from == hostFrom else { return }
+        }
+        switch t {
         case "state":
-            guard let s = ShareChannel.decode(State.self, m) else { return }
+            guard let s = ShareChannel.decode(State.self, m), s.host.id == from else { return }
             let first = state == nil
             state = s; members = s.members
             follow(s, app: app)
@@ -341,7 +351,7 @@ enum ShareIdentity {
 
     private func attach(_ ch: ShareChannel, role: Role) {
         channel = ch; self.role = role
-        ch.onMessage = { [weak self] m in role == .host ? self?.hostHandle(m) : self?.guestHandle(m) }
+        ch.onMessage = { [weak self] m, from in role == .host ? self?.hostHandle(m) : self?.guestHandle(m, from: from) }
         ch.onState = { [weak self] up in self?.connected = up }
         ch.connect()
     }
@@ -350,7 +360,7 @@ enum ShareIdentity {
         loop?.cancel(); loop = nil
         let ch = channel
         Task { try? await Task.sleep(nanoseconds: 500_000_000); ch?.close() }
-        channel = nil; role = nil; state = nil; members = []; link = nil; sheetOpen = false
+        channel = nil; role = nil; state = nil; members = []; link = nil; sheetOpen = false; hostFrom = nil
     }
 }
 
@@ -458,7 +468,7 @@ enum ShareIdentity {
     private func wire(_ ch: ShareChannel, _ playlistId: String) {
         channels[playlistId] = ch
         ch.lastId = links[playlistId]?.cursor ?? 0
-        ch.onMessage = { [weak self] m in Task { await self?.apply(m, playlistId) } }
+        ch.onMessage = { [weak self] m, _ in Task { await self?.apply(m, playlistId) } }
         ch.onCursor = { [weak self] n in
             guard let self, var l = self.links[playlistId] else { return }
             l.cursor = n; self.links[playlistId] = l; self.save()
@@ -468,6 +478,7 @@ enum ShareIdentity {
     /// Others' changes, into this device's copy.
     private func apply(_ m: [String: Any], _ playlistId: String) async {
         guard let app, var l = links[playlistId] else { return }
+        let channel = l.channel
         switch m["t"] as? String {
         case "snap":
             let songs = ((m["songs"] as? [Any]) ?? []).compactMap { ShareChannel.decode(WireSong.self, $0) }
@@ -485,22 +496,27 @@ enum ShareIdentity {
             l.known.removeAll { $0 == v }
         default: return
         }
-        links[playlistId] = l; save()
+        // Left (or re-shared) while the core was busy: drop the late result.
+        guard var cur = links[playlistId], cur.channel == channel else { return }
+        cur.known = l.known
+        links[playlistId] = cur; save()
         await app.library.refresh()
     }
 
     /// This device's changes, out: the playlist now vs. what the channel last agreed on.
     func push(_ playlistId: String) async {
-        guard let app, var l = links[playlistId], let ch = channels[playlistId], !busy.contains(playlistId) else { return }
+        guard let app, let l = links[playlistId], let ch = channels[playlistId], !busy.contains(playlistId) else { return }
         busy.insert(playlistId); defer { busy.remove(playlistId) }
-        guard let page = try? await app.core.getPlaylist(id: playlistId) else { return }
+        let channel = l.channel
+        guard let page = try? await app.core.getPlaylist(id: playlistId), links[playlistId]?.channel == channel else { return }
         let now = page.items.map(\.videoId), nowSet = Set(now), known = Set(l.known)
         for s in page.items where !known.contains(s.videoId) {
             if let v = ShareChannel.encode(WireSong(s)) { ch.send(["t": "add", "song": v]) }
         }
         for v in known where !nowSet.contains(v) { ch.send(["t": "remove", "videoId": v]) }
-        l.known = now
-        links[playlistId] = l; save()
+        guard var cur = links[playlistId], cur.channel == channel else { return }
+        cur.known = now
+        links[playlistId] = cur; save()
     }
 
     /// After any library change: push each collaborative playlist's difference.

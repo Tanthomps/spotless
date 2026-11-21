@@ -141,11 +141,18 @@ extension Router {
             }
         case "jam":
             // spotless://jam?c=<channel>&k=<key>: join a Jam (from the web page's "Open in Spotless").
+            // Asks first: a link opened from anywhere never joins (or sends your name) by itself.
             app.router.dismissOverlays()
-            if let q = url?.query { app.jam.join(fragment: q) }
+            if let q = url?.query {
+                app.confirm = ConfirmRequest(title: "Join this Jam?", message: "Others in the Jam will see your name and what you add.", action: "Join") { app.jam.join(fragment: q) }
+            }
         case "collab":
-            // spotless://collab?c=…&k=…&n=<name>: join a collaborative playlist.
-            if let q = url?.query { app.collab.join(fragment: q) }
+            // spotless://collab?c=…&k=…&n=<name>: join a collaborative playlist, after a confirm.
+            if let q = url?.query {
+                var c = URLComponents(); c.query = q
+                let name = c.queryItems?.first { $0.name == "n" }?.value ?? "a collaborative playlist"
+                app.confirm = ConfirmRequest(title: "Join \(name)?", message: "You and the others can add and remove its songs.", action: "Join") { app.collab.join(fragment: q) }
+            }
         case "pair":
             // spotless://pair?v=1&code=…&addr=… (the QR another device shows, opened by the camera).
             app.router.dismissOverlays()

@@ -308,7 +308,15 @@ enum ShareIdentity {
     }
 
     /// `{t: "signed", body: <JSON text>, sig: <P-256 r‖s, base64>}`.
+    /// Signed bodies carry the channel id and a rising sequence, so an old or another Jam's
+    /// message can't be replayed (guests keep only what's newer than the last one they took).
+    @ObservationIgnored private var seq: Int64 = 0
+    @ObservationIgnored private var lastSeq: Int64 = 0
+
     private func sendSigned(_ msg: [String: Any]) {
+        seq = max(seq + 1, Int64(Date().timeIntervalSince1970 * 1000))
+        var msg = msg
+        msg["ch"] = channel?.id; msg["seq"] = seq
         guard let signer, let d = try? JSONSerialization.data(withJSONObject: msg), let body = String(data: d, encoding: .utf8),
               let sig = try? signer.signature(for: Data(body.utf8)) else { return }
         channel?.send(["t": "signed", "body": body, "sig": sig.rawRepresentation.base64EncodedString()], snap: msg["t"] as? String == "state")
@@ -320,7 +328,10 @@ enum ShareIdentity {
               let sigB64 = m["sig"] as? String, let sigData = Data(base64Encoded: sigB64),
               let sig = try? P256.Signing.ECDSASignature(rawRepresentation: sigData),
               hostKey.isValidSignature(sig, for: Data(body.utf8)) else { return nil }
-        return try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
+        guard let o = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any],
+              o["ch"] as? String == channel?.id, let n = (o["seq"] as? NSNumber)?.int64Value, n > lastSeq else { return nil }
+        lastSeq = n
+        return o
     }
 
     private func guestHandle(_ raw: [String: Any], from: String) {
@@ -384,7 +395,7 @@ enum ShareIdentity {
         loop?.cancel(); loop = nil
         let ch = channel
         Task { try? await Task.sleep(nanoseconds: 500_000_000); ch?.close() }
-        channel = nil; role = nil; state = nil; members = []; link = nil; sheetOpen = false; signer = nil; hostKey = nil
+        channel = nil; role = nil; state = nil; members = []; link = nil; sheetOpen = false; signer = nil; hostKey = nil; lastSeq = 0
     }
 }
 

@@ -82,12 +82,17 @@ $('go').onclick = async () => {
   try { await setup(); connect(); $('join').classList.add('hidden'); $('jam').classList.remove('hidden'); }
   catch (e) { $('err').textContent = e.message; }
 };
-let HOSTKEY = null;
+let HOSTKEY = null, lastSeq = 0;
 async function verifyHost(o) {
   try {
     if (!HOSTKEY) HOSTKEY = await crypto.subtle.importKey('raw', b64u(q.get('p') || ''), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
     const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, HOSTKEY, fromB64(o.sig), new TextEncoder().encode(o.body));
-    return ok ? JSON.parse(o.body) : null;
+    if (!ok) return null;
+    const b = JSON.parse(o.body);
+    // Same Jam, and newer than the last one taken: an old message can't be replayed.
+    if (b.ch !== CH || !(b.seq > lastSeq)) return null;
+    lastSeq = b.seq;
+    return b;
   } catch { return null; }
 }
 function connect() {

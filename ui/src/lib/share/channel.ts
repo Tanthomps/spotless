@@ -14,8 +14,22 @@ export const toWire = (s: SongItem): WireSong => ({
 	thumbnail: s.thumbnail ?? null,
 	duration: s.duration ?? null
 });
-export const fromWire = (w: WireSong): SongItem =>
-	({ video_id: w.videoId, title: w.title, artists: w.artists, thumbnail: w.thumbnail ?? undefined, duration: w.duration ?? undefined }) as SongItem;
+/** A YouTube video id and nothing else: never a LOCAL:/PODURL: id, path or URL from a peer. */
+export const validId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{11}$/.test(v);
+const str = (v: unknown, n: number) => (typeof v === 'string' ? v.slice(0, n) : '');
+/** Peer songs in: only YouTube ids, capped text, https thumbnails. Anything else is dropped. */
+export function fromWire(w: WireSong): SongItem | null {
+	if (!w || !validId(w.videoId)) return null;
+	const thumb = str(w.thumbnail, 500);
+	return {
+		video_id: w.videoId,
+		title: str(w.title, 200) || 'Unknown',
+		artists: str(w.artists, 200),
+		thumbnail: thumb.startsWith('https://') ? thumb : undefined,
+		duration: str(w.duration, 12) || undefined
+	} as SongItem;
+}
+export const fromWireAll = (ws: unknown): SongItem[] => (Array.isArray(ws) ? ws.map(fromWire).filter((s): s is SongItem => !!s) : []);
 
 const enc = new TextEncoder();
 const toB64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));

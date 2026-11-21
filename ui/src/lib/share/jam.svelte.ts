@@ -3,7 +3,7 @@
 // accept what verifies, carries this Jam's id and a rising sequence.
 import * as api from '$lib/api';
 import { auth, playback, toast } from '$lib/player.svelte';
-import { Channel, RELAY, b64url, fromB64url, fromWire, parseFragment, shareMe, toWire, type WireSong } from './channel';
+import { Channel, RELAY, b64url, fromB64url, fromWire, fromWireAll, parseFragment, validId, shareMe, toWire, type WireSong } from './channel';
 
 type Member = { id: string; name: string };
 type State = { host: Member; items: WireSong[]; index: number; posMs: number; at: number; playing: boolean; members: Member[] };
@@ -133,11 +133,15 @@ function hostHandle(m: Record<string, unknown>, from: string) {
 			if (!id || id !== from || id === shareMe()) return;
 			jam.members = jam.members.filter((x) => x.id !== id);
 			return void publish(true);
-		case 'add':
-			return void api.addToQueue([fromWire(m.song as WireSong)]).catch(() => {});
+		case 'add': {
+			const song = fromWire(m.song as WireSong);
+			if (song && playback.queue.items.length < 500) void api.addToQueue([song]).catch(() => {});
+			return;
+		}
 		case 'remove': {
 			const q = playback.queue;
-			const i = q.items.findLastIndex((s, n) => n > q.currentIndex && s.video_id === m.videoId);
+			if (!validId(m.videoId)) return;
+		const i = q.items.findLastIndex((s, n) => n > q.currentIndex && s.video_id === m.videoId);
 			if (i >= 0) void api.removeFromQueue(i).catch(() => {});
 			return;
 		}
@@ -188,11 +192,13 @@ async function guestHandle(raw: Record<string, unknown>) {
 
 /** Play what the host plays, where the host is. */
 async function follow(s: State) {
-	const cur = s.items[s.index];
-	if (!cur) return;
+	const items = fromWireAll(s.items);
+	const cur = items[s.index];
+	// One bad id in the host's queue would shift indexes; refuse the whole state instead.
+	if (!cur || items.length !== s.items.length) return;
 	const want = (s.posMs + (s.playing ? Math.max(0, Date.now() - s.at) : 0)) / 1000;
-	if (playback.now?.videoId !== cur.videoId) {
-		await api.playPlaylist(s.items.map(fromWire), s.index).catch(() => {});
+	if (playback.now?.videoId !== cur.video_id) {
+		await api.playPlaylist(items, s.index).catch(() => {});
 		// ponytail: seeks once the stream opens (~1 s); a slower resolve starts a little behind.
 		setTimeout(() => void api.seek(want + 1.2).catch(() => {}), 1200);
 		if (!s.playing) setTimeout(() => !playback.paused && void api.togglePause(), 1500);

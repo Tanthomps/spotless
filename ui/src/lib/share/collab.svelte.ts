@@ -5,7 +5,7 @@
 import * as api from '$lib/api';
 import { toast } from '$lib/player.svelte';
 import { copyText } from '$lib/clipboard';
-import { Channel, RELAY, b64url, fromB64url, fromWire, parseFragment, shareMe, toWire, type WireSong } from './channel';
+import { Channel, RELAY, b64url, fromB64url, fromWire, fromWireAll, parseFragment, validId, shareMe, toWire, type WireSong } from './channel';
 
 type Link = { playlistId: string; channel: string; key: string; known: string[]; cursor?: number };
 const KEY = 'collab.links';
@@ -97,17 +97,17 @@ async function apply(m: Record<string, unknown>, playlistId: string) {
 	const channel = l.channel;
 	let known = [...l.known];
 	if (m.t === 'snap') {
-		const songs = ((m.songs as WireSong[]) ?? []).filter((s) => s?.videoId);
+		const songs = fromWireAll(m.songs).slice(0, 2000);
 		const have = new Set((await api.getPlaylist(playlistId).catch(() => null))?.items.map((s) => s.video_id) ?? []);
-		const missing = songs.filter((s) => !have.has(s.videoId)).map(fromWire);
+		const missing = songs.filter((s) => !have.has(s.video_id));
 		if (missing.length) await api.libPlaylistAdd(playlistId, missing).catch(() => {});
-		known = [...new Set([...known, ...songs.map((s) => s.videoId)])];
+		known = [...new Set([...known, ...songs.map((s) => s.video_id)])];
 	} else if (m.t === 'add') {
-		const s = m.song as WireSong;
-		if (!s?.videoId || known.includes(s.videoId)) return;
-		await api.libPlaylistAdd(playlistId, [fromWire(s)]).catch(() => {});
-		known.push(s.videoId);
-	} else if (m.t === 'remove' && typeof m.videoId === 'string') {
+		const s = fromWire(m.song as WireSong);
+		if (!s || known.includes(s.video_id)) return;
+		await api.libPlaylistAdd(playlistId, [s]).catch(() => {});
+		known.push(s.video_id);
+	} else if (m.t === 'remove' && validId(m.videoId)) {
 		await api.libPlaylistRemoveVideos(playlistId, [m.videoId]).catch(() => {});
 		known = known.filter((v) => v !== m.videoId);
 	} else return;

@@ -40,7 +40,7 @@
 				{side}
 				{sideOffset}
 				collisionPadding={8}
-				class="z-[1060] max-w-[300px] rounded-sm bg-bg-menu px-2 py-1 text-sm text-white shadow-menu data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-100"
+				class="z-[1060] max-w-[300px] rounded-md glass px-2 py-1 text-sm text-white shadow-menu data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-100"
 			>
 				{text}
 			</Tooltip.Content>

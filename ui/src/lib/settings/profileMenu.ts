@@ -9,11 +9,14 @@ import { openMenu, type MenuEntry, type MenuTarget } from '$lib/kit/menus';
 import { goSettings, importFromSpotify, togglePrivateSession } from './actions';
 import { linked, openPairing } from '$lib/devices.svelte';
 import { W } from '$lib/devices';
+import { chooseProfilePhoto, profilePhoto, removeProfilePhoto } from '$lib/profilePhoto.svelte';
 
 export function profileMenuEntries(): MenuEntry[] {
 	const account = auth.account;
 	return [
 		{ type: 'heading', label: account?.signedIn && account.name ? `Spotless · ${account.name}` : 'Spotless · Local profile' },
+		{ label: profilePhoto.url ? 'Change profile photo' : 'Add profile photo', onSelect: () => void chooseProfilePhoto() },
+		...(profilePhoto.url ? [{ label: 'Remove profile photo', onSelect: removeProfilePhoto } as MenuEntry] : []),
 		{ label: 'Listening stats', onSelect: () => goto('/stats') },
 		{ label: 'Recently played', onSelect: () => goto('/history') },
 		{ label: 'Import from Spotify', onSelect: importFromSpotify },

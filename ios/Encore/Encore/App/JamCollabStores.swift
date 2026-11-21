@@ -24,6 +24,22 @@ struct WireSong: Codable, Equatable, Hashable {
     var duration: String?
     init(_ s: SongItem) { videoId = s.videoId; title = s.title; artists = s.artists; thumbnail = s.thumbnail; duration = s.duration }
     var song: SongItem { SongItem(videoId: videoId, title: title, artists: artists, duration: duration, thumbnail: thumbnail) }
+    private enum CodingKeys: String, CodingKey { case videoId, title, artists, thumbnail, duration }
+    /// Peer songs in: a YouTube video id only (never a LOCAL:/PODURL: id, path or URL), capped
+    /// text, https thumbnails. Anything else fails to decode and is dropped.
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        let id = try c.decode(String.self, forKey: .videoId)
+        guard id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil else {
+            throw DecodingError.dataCorruptedError(forKey: .videoId, in: c, debugDescription: "not a video id")
+        }
+        videoId = id
+        title = String((try? c.decode(String.self, forKey: .title))?.prefix(200) ?? "Unknown")
+        artists = String((try? c.decode(String.self, forKey: .artists))?.prefix(200) ?? "")
+        let t = (try? c.decodeIfPresent(String.self, forKey: .thumbnail)) ?? nil
+        thumbnail = t.flatMap { $0.hasPrefix("https://") && $0.count <= 500 ? $0 : nil }
+        duration = ((try? c.decodeIfPresent(String.self, forKey: .duration)) ?? nil).map { String($0.prefix(12)) }
+    }
 }
 
 /// One live channel: a WebSocket to the relay that reconnects, seals what it sends and opens what

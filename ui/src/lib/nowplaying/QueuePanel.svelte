@@ -38,6 +38,16 @@
 	import { removeFromQueue } from '$lib/kit/actions';
 	import QueueRow from './QueueRow.svelte';
 	import { roving } from '$lib/kit/roving';
+	// Mix: the crossfade length, the iPhone queue's first footer button (same setting as Settings).
+	let mixOpen = $state(false);
+	let mixSecs = $state(0);
+	async function openMix() {
+		mixOpen = !mixOpen;
+		if (mixOpen) mixSecs = (await api.audioSettings().catch(() => null))?.crossfadeSecs ?? mixSecs;
+	}
+	function saveMix() {
+		api.setCrossfadeSecs(mixSecs).catch(() => {});
+	}
 	// ── stream: smart2 ── Smart Shuffle suggestions: sparkle + add/remove instead of a plain row.
 	import SuggestionRow from '$lib/smart/SuggestionRow.svelte';
 	import { addSuggestion, removeSuggestion, smartShuffle } from '$lib/smart/smartshuffle.svelte';
@@ -306,7 +316,23 @@
 			onclick={() => (tab = id as 'queue' | 'recent')}>{label}</button
 		>
 	{/each}
+	<button
+		type="button"
+		aria-expanded={mixOpen}
+		class="ml-auto h-8 rounded-full px-3 text-sm transition-colors {mixOpen || mixSecs > 0 ? 'bg-accent text-black' : 'bg-white/[0.07] text-white hover:bg-white/[0.1]'}"
+		onclick={openMix}>Mix</button
+	>
 </div>
+{#if mixOpen}
+	<div class="glass mx-4 mt-2 rounded-lg p-3 text-white">
+		<div class="flex items-baseline justify-between">
+			<span class="text-sm font-bold">Transitions</span>
+			<span class="text-xs text-text-subdued tabular-nums">{mixSecs === 0 ? 'Off' : `${mixSecs} s crossfade`}</span>
+		</div>
+		<p class="mt-0.5 text-xs text-text-subdued">Blend the end of each song into the next.</p>
+		<input type="range" min="0" max="12" step="1" bind:value={mixSecs} onchange={saveMix} aria-label="Crossfade seconds" class="mt-2 w-full accent-[var(--color-accent)]" />
+	</div>
+{/if}
 
 {#if tab === 'recent'}
 	<div class="px-2 pb-4 pt-2" role="list" aria-label="Recently played">

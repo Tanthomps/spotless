@@ -14,6 +14,37 @@
 	import { isSpotifyLink, openSpotifyLink } from '$lib/import.svelte';
 	import { isPairLink } from '$lib/devices';
 	import { openPairing } from '$lib/devices.svelte';
+	import { confirmDialog } from '$lib/kit/confirm.svelte';
+	import { joinJam } from '$lib/share/jam.svelte';
+	import { joinCollab } from '$lib/share/collab.svelte';
+	import { RELAY } from '$lib/share/channel';
+
+	/** A Jam or collaborative-playlist invite (app link or the relay's web link): ask, then join. */
+	function shareLink(raw: string): boolean {
+		const s = raw.trim();
+		let kind: 'jam' | 'collab' | null = null;
+		let frag = '';
+		if (s.startsWith('spotless://jam?') || s.startsWith('spotless://collab?')) {
+			kind = s.startsWith('spotless://jam') ? 'jam' : 'collab';
+			frag = s.slice(s.indexOf('?') + 1);
+		} else if (s.startsWith(RELAY + '/j#') || s.startsWith(RELAY + '/p#')) {
+			kind = s.startsWith(RELAY + '/j') ? 'jam' : 'collab';
+			frag = s.slice(s.indexOf('#') + 1);
+		}
+		if (!kind) return false;
+		const name = new URLSearchParams(frag).get('n');
+		void confirmDialog(
+			kind === 'jam'
+				? { title: 'Join this Jam?', body: "You'll hear what the host plays, in sync.", confirmLabel: 'Join' }
+				: { title: `Join ${name ? `"${name}"` : 'this playlist'}?`, body: 'It gets added to Your Library. Anyone in it can add and remove songs.', confirmLabel: 'Join' }
+		).then(async (ok) => {
+			if (!ok) return;
+			if (kind === 'jam') return void joinJam(frag);
+			const id = await joinCollab(frag);
+			if (typeof id === 'string') goto(hrefFor({ kind: 'playlist', id, title: '' }));
+		});
+		return true;
+	}
 
 	let url = $state('');
 
@@ -26,6 +57,11 @@
 
 	function submit(e: Event) {
 		e.preventDefault();
+		if (shareLink(url)) {
+			ui.linkOpen = false;
+			url = '';
+			return;
+		}
 		// A Spotify link opens its YouTube Music counterpart, or the import for a playlist (#375).
 		if (isSpotifyLink(url)) {
 			ui.linkOpen = false;
@@ -53,6 +89,7 @@
 			// A device-linking QR (`spotless://pair?…`, deeplink.rs passes it through): join with it.
 			const pair = given.find(isPairLink);
 			if (pair) return openPairing({ qr: pair });
+			if (given.some(shareLink)) return;
 			const spotify = given.find(isSpotifyLink);
 			if (spotify) return openSpotifyLink(spotify);
 			const target = given.map(parseYtLink).find((x) => x);

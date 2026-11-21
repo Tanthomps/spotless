@@ -148,10 +148,10 @@ private struct FolderMenu: View {
 }
 
 enum NameSheetKind: Equatable {
-    case playlist, folder
+    case playlist, folder, collab
     /// Rename an existing folder (the field starts with its name; the button says Save).
     case renameFolder(id: String, current: String)
-    var isPlaylist: Bool { self == .playlist }
+    var isPlaylist: Bool { self == .playlist || self == .collab }
 }
 
 /// Full-height naming screen: centred prompt, a large underlined field, Cancel and an accent Create.
@@ -205,7 +205,7 @@ struct NameSheet: View {
         .background(LinearGradient(colors: [Color(hex: "#3a3a3a"), Palette.base], startPoint: .top, endPoint: .center))
         .onAppear {
             switch kind {
-            case .playlist: name = "My playlist #\(app.library.snapshot.playlists.count + 1)"
+            case .playlist, .collab: name = "My playlist #\(app.library.snapshot.playlists.count + 1)"
             case .folder: name = "New folder"
             case .renameFolder(_, let current): name = current
             }
@@ -217,6 +217,7 @@ struct NameSheet: View {
     private var prompt: String {
         switch kind {
         case .playlist: "Give your playlist a name"
+        case .collab: "Name your collaborative playlist"
         case .folder: "Give your folder a name"
         case .renameFolder: "Rename this folder"
         }
@@ -238,6 +239,11 @@ struct NameSheet: View {
             do {
                 switch kind {
                 case .playlist: route = .playlist(try await app.core.createPlaylist(name: n).id)
+                case .collab:
+                    let id = try await app.core.createPlaylist(name: n).id
+                    route = .playlist(id)
+                    // Shared at once, then the invite goes out from the system share sheet.
+                    if let link = await app.collab.share(id) { CollabInvite.present(link, name: n, app: app) }
                 case .folder, .renameFolder: route = .folder(try await app.core.createFolder(name: n).id)
                 }
             } catch {

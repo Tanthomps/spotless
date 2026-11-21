@@ -82,7 +82,7 @@ private struct AppRoot: View {
             .onOpenURL { app.router.handle($0, app: app) }
             // Device sync polls fast in front and slowly behind; coming back syncs at once.
             .onChange(of: phase) { _, p in
-                if p == .active { app.devices.setActive(true) } else if p == .background { app.devices.setActive(false) }
+                if p == .active { app.devices.setActive(true); app.collab.resume() } else if p == .background { app.devices.setActive(false) }
             }
     }
 }

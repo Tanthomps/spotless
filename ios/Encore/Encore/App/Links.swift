@@ -139,6 +139,13 @@ extension Router {
                 let i = min(index, page.items.count - 1)
                 app.player.play(page.items, at: i, context: PlayContext(kind: .album, id: id, title: page.title ?? ""))
             }
+        case "jam":
+            // spotless://jam?c=<channel>&k=<key>: join a Jam (from the web page's "Open in Spotless").
+            app.router.dismissOverlays()
+            if let q = url?.query { app.jam.join(fragment: q) }
+        case "collab":
+            // spotless://collab?c=…&k=…&n=<name>: join a collaborative playlist.
+            if let q = url?.query { app.collab.join(fragment: q) }
         case "pair":
             // spotless://pair?v=1&code=…&addr=… (the QR another device shows, opened by the camera).
             app.router.dismissOverlays()

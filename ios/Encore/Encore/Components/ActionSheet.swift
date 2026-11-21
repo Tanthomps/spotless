@@ -126,6 +126,10 @@ struct ActionSheet: View {
                 SheetRow(icon: "queue", title: "Add to queue") { app.queue([s], from: ctx?.title) },
                 SheetRow(icon: "list-plus", title: "Play next") { app.playNext([s], from: ctx?.title) },
             ]
+            // In someone else's Jam, the queue is theirs: songs go to the Jam.
+            if app.jam.role == .guest {
+                r.insert(SheetRow(icon: "users-three", title: "Add to Jam") { app.jam.add([s]) }, at: 2)
+            }
             let music = s.isEpisode != true
             // Episodes (search results, Now Playing): Download, like the episode sheet.
             if !music { r.insert(episodeDownloadRow(app, song: s), at: 2) }
@@ -236,6 +240,18 @@ struct ActionSheet: View {
                     }
                 })
             }
+            // Own playlists on this phone can be shared to edit together (App/JamCollabStores.swift).
+            if own && c.id.hasPrefix("LOCALPLAYLIST") {
+                r.append(SheetRow(icon: "user-plus", title: app.collab.isCollab(c.id) ? "Invite more collaborators" : "Invite collaborators") {
+                    Task { if let link = await app.collab.share(c.id) { CollabInvite.present(link, name: c.title, app: app) } }
+                })
+                if app.collab.isCollab(c.id) {
+                    r.append(SheetRow(icon: "x-circle", title: "Stop collaborating") {
+                        app.collab.leave(c.id)
+                        app.showToast("\(c.title) is yours alone again")
+                    })
+                }
+            }
             r += [
                 pinRow(c),
                 SheetRow(icon: "share-network", title: "Share") { ShareSheet.presentAfterSheet(.item(c), app: app) },
@@ -305,7 +321,7 @@ struct ActionSheet: View {
             return episodeSheetRows(app, e)
         case .show(let sh):
             return showSheetRows(app, sh)
-        case .sleepTimer, .speed, .chapters, .effects, .aboutRecommendations, .newFolder, .newPlaylist, .addToPlaylist, .editPlaylist, .addSongs:
+        case .sleepTimer, .speed, .chapters, .effects, .aboutRecommendations, .newFolder, .newPlaylist, .newCollab, .addToPlaylist, .editPlaylist, .addSongs:
             return []
         case .sort:
             // Custom order only applies to playlists (Spotify).

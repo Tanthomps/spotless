@@ -28,6 +28,8 @@ struct RootView: View {
                         .offset(y: 34)
                         .allowsHitTesting(false)
                 }
+            CreateMenuOverlay()
+                .zIndex(2.2)
             SideMenu()
                 .zIndex(2.5)
             NowPlayingCover()
@@ -71,6 +73,13 @@ struct RootView: View {
                 .presentationBackground { SheetGlass() }
                 .presentationCornerRadius(Radius.glassSheet)
         }
+        .sheet(isPresented: Bindable(app.jam!).sheetOpen) {
+            JamSheet().environment(app)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground { SheetGlass() }
+                .presentationCornerRadius(Radius.glassSheet)
+        }
         .fullScreenCover(isPresented: $app.importOpen, onDismiss: { app.devices.importClosed() }) { ImportOnboarding().environment(app) }
         // Device sync: link a Mac (Screens/Devices.swift), and the first-run offer after the import.
         .sheet(isPresented: Bindable(app.devices).sheetOpen, onDismiss: { app.devices.closed() }) {
@@ -106,6 +115,7 @@ struct RootView: View {
         case .aboutRecommendations: AboutRecommendationsSheet()
         case .newFolder: NameSheet(kind: .folder)
         case .newPlaylist: NameSheet(kind: .playlist)
+        case .newCollab: NameSheet(kind: .collab)
         case .editPlaylist(let id): EditPlaylistSheet(id: id)
         case .addSongs(let id, let name): AddSongsSheet(id: id, name: name)
         case .create, .sort: FittedActionSheet(subject: s)
@@ -122,7 +132,7 @@ struct RootView: View {
         case .speed: [.height(420)]
         case .effects: [.large]
         case .aboutRecommendations: [.large]
-        case .newFolder, .newPlaylist, .addToPlaylist, .editPlaylist, .addSongs: [.large]
+        case .newFolder, .newPlaylist, .newCollab, .addToPlaylist, .editPlaylist, .addSongs: [.large]
         default: [.medium, .large]
         }
     }
@@ -218,6 +228,9 @@ struct BottomChrome: View {
                     .padding(.horizontal, Metrics.miniPlayerInset)
                     .transition(Motion.slide(.bottom, fade: true))
             }
+            if app.jam.active {
+                JamPill().transition(Motion.slide(.bottom, fade: true))
+            }
             // Another linked device is playing and this one isn't: Spotify's "Playing on <device>" bar.
             if let r = app.devices.activeRemote, r.playing, !app.player.hasTrack || app.player.paused {
                 RemoteDeviceBar(device: r)
@@ -232,6 +245,7 @@ struct BottomChrome: View {
         }
         .animation(Motion.spring, value: app.player.hasTrack)
         .animation(Motion.spring, value: app.devices.activeRemote?.playing)
+        .animation(Motion.spring, value: app.jam.active)
         .animation(Motion.spring, value: app.downloads.offline)
         .onChange(of: app.downloads.offline) { was, now in
             guard was != now else { return }
@@ -366,7 +380,7 @@ struct TabBar: View {
             ForEach(Tab.allCases, id: \.self) { tab in
                 let selected = app.router.tab == tab && tab != .create
                 Button {
-                    if tab == .create { app.sheet = .create } else { app.router.select(tab) }
+                    if tab == .create { app.router.createOpen.toggle() } else { app.router.createOpen = false; app.router.select(tab) }
                 } label: {
                     VStack(spacing: 3) {
                         Group {
@@ -374,7 +388,16 @@ struct TabBar: View {
                             case .home: Icon(name: "house", fill: selected, size: Metrics.tabIcon)
                             case .search: SearchGlyph(bold: selected, size: Metrics.tabIcon)
                             case .library: LibraryGlyph(filled: selected, size: Metrics.tabIcon)
-                            case .create: Icon(name: "plus", size: Metrics.tabIcon)
+                            case .create:
+                                // Open: Spotify turns the tab into a white circle with a black ✕.
+                                if app.router.createOpen {
+                                    Icon(name: "x", size: 20).foregroundStyle(.black)
+                                        .frame(width: 40, height: 40).background(Circle().fill(.white))
+                                        .frame(width: Metrics.tabIcon, height: Metrics.tabIcon)
+                                        .transition(.scale.combined(with: .opacity))
+                                } else {
+                                    Icon(name: "plus", size: Metrics.tabIcon)
+                                }
                             }
                         }
                         Text(tab.title).font(Typo.font(11, selected ? .semibold : .medium)).lineLimit(1)

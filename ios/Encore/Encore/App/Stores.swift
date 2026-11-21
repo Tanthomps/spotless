@@ -270,6 +270,7 @@ enum SheetSubject: Identifiable, Equatable {
     case aboutRecommendations
     case newFolder
     case newPlaylist
+    case newCollab
     /// Spotify's "Add to playlist" picker (also "Saved in" from a liked song's check button).
     case addToPlaylist([SongItem])
     /// Own playlists: Edit playlist, and Add to this playlist (id, name).
@@ -290,6 +291,7 @@ enum SheetSubject: Identifiable, Equatable {
         case .aboutRecommendations: "aboutRecs"
         case .newFolder: "newFolder"
         case .newPlaylist: "newPlaylist"
+        case .newCollab: "newCollab"
         case .addToPlaylist(let s): "add:\(s.map(\.videoId).joined(separator: ","))"
         case .editPlaylist(let id): "edit:\(id)"
         case .addSongs(let id, _): "addSongs:\(id)"
@@ -320,6 +322,9 @@ final class AppModel {
     let account: AccountStore
     /// Device sync: Settings › Devices, the linking sheet, the welcome and the Home hint.
     let devices: DeviceSyncStore
+    /// Jam and collaborative playlists over the share relay (App/JamCollabStores.swift).
+    @ObservationIgnored private(set) var jam: JamStore!
+    @ObservationIgnored private(set) var collab: CollabStore!
     let router = Router()
     var toast: ToastMessage?
     /// Music's tempo, pitch and reverb for this session (Speed & pitch, `setEffects`).
@@ -385,6 +390,9 @@ final class AppModel {
             a.report = { [weak self] sentence in self?.fail(sentence) }
         }
         downloads.onOfflineChange = { [weak self] off in self?.offlineChanged(off) }
+        jam = JamStore(app: self)
+        collab = CollabStore(app: self)
+        collab.resume()
     }
 
     static func defaultPrefs(for core: CoreClient) -> UserDefaults? {
@@ -497,7 +505,7 @@ final class AppModel {
             } else { library.likedIds.remove(id) }
         case .libraryChanged(let scope):
             Task {
-                if scope == "podcasts" || scope == "episodes" { await podcasts.refresh() } else { await library.refresh() }
+                if scope == "podcasts" || scope == "episodes" { await podcasts.refresh() } else { await library.refresh(); collab.libraryChanged() }
             }
         case .podcastProgress(let id, let p): podcasts.progress[id] = p
         case .downloadsChanged:

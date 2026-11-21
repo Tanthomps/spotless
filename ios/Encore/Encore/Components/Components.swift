@@ -17,20 +17,155 @@ struct Icon: View {
     }
 }
 
+/// An `Icon` whose swaps blend: the old glyph shrinks to 0.8 and blurs out while the new one does
+/// the reverse, overlapping. (`.contentTransition(.symbolEffect)` does nothing on asset images.)
+struct IconSwap: View {
+    let name: String
+    var fill = false
+    var size: CGFloat = 24
+    var body: some View {
+        ZStack {
+            Icon(name: name, fill: fill, size: size)
+                .id("\(name)\(fill)")
+                .transition(Motion.reduce ? .opacity : .modifier(active: PopEffect(scale: 0.8, blur: 4, opacity: 0), identity: PopEffect(scale: 1, blur: 0, opacity: 1)))
+        }
+        .animation(.easeOut(duration: 0.18), value: "\(name)\(fill)")
+    }
+}
+
+/// Spotify's play / pause marks, drawn to their proportions of the circle (measured on the 64 pt Now
+/// Playing button: triangle 20.5 × 26 with soft corners, nudged 1/12 of its width right of centre;
+/// pause bars 6 × 22, 7 apart). Phosphor's are smaller and sit off-centre in their box.
+struct PlayPauseGlyph: View {
+    let playing: Bool
+    let size: CGFloat
+    var body: some View {
+        ZStack {
+            Canvas { ctx, sz in
+                let h = size * 0.406, w = size * 0.32, r = size * 0.03
+                let x0 = (sz.width - w) / 2 + w / 12, y0 = (sz.height - h) / 2
+                var p = Path()
+                p.move(to: CGPoint(x: x0 + r, y: y0 + r))
+                p.addLine(to: CGPoint(x: x0 + w - r, y: sz.height / 2))
+                p.addLine(to: CGPoint(x: x0 + r, y: y0 + h - r))
+                p.closeSubpath()
+                ctx.fill(p, with: .foreground)
+                ctx.stroke(p, with: .foreground, style: StrokeStyle(lineWidth: r * 2, lineJoin: .round))
+            }
+            .opacity(playing ? 0 : 1).scaleEffect(playing ? 0.8 : 1).blur(radius: playing ? 3 : 0)
+            Canvas { ctx, sz in
+                let h = size * 0.344, w = size * 0.094, gap = size * 0.11
+                let x0 = (sz.width - w * 2 - gap) / 2, y0 = (sz.height - h) / 2
+                for x in [x0, x0 + w + gap] {
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: y0, width: w, height: h), cornerRadius: size * 0.02), with: .foreground)
+                }
+            }
+            .opacity(playing ? 1 : 0).scaleEffect(playing ? 1 : 0.8).blur(radius: playing ? 0 : 3)
+        }
+        .frame(width: size, height: size)
+        .animation(Motion.reduce ? .linear(duration: 0.12) : .easeOut(duration: 0.18), value: playing)
+    }
+}
+
+/// Spotify's previous / next: a solid triangle against a bar, 23 × 22 at the 32 pt slot.
+struct SkipGlyph: View {
+    let forward: Bool
+    var size: CGFloat = 32
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = size / 32, w = 23 * s, h = 22 * s, bar = 3.2 * s, r = 1 * s
+            let x0 = (sz.width - w) / 2, y0 = (sz.height - h) / 2
+            var tri = Path()
+            tri.move(to: CGPoint(x: x0 + r, y: y0 + r))
+            tri.addLine(to: CGPoint(x: x0 + w - bar - 1 * s - r, y: sz.height / 2))
+            tri.addLine(to: CGPoint(x: x0 + r, y: y0 + h - r))
+            tri.closeSubpath()
+            var all = tri
+            all.addPath(Path(roundedRect: CGRect(x: x0 + w - bar, y: y0, width: bar, height: h), cornerRadius: s))
+            if !forward { all = all.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: sz.width, ty: 0)) }
+            ctx.fill(all, with: .foreground)
+            ctx.stroke(forward ? tri : tri.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: sz.width, ty: 0)),
+                       with: .foreground, style: StrokeStyle(lineWidth: r * 2, lineJoin: .round))
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// Grey placeholder rows while a list loads (skeletons, never a spinner).
+struct SkeletonRows: View {
+    var count = 6
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<count, id: \.self) { i in
+                HStack(spacing: Space.m) {
+                    RoundedRectangle(cornerRadius: Radius.xs).fill(Palette.elevatedHighlight).frame(width: Metrics.rowArt, height: Metrics.rowArt)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Capsule().fill(Palette.elevatedHighlight).frame(width: 160, height: 10)
+                        Capsule().fill(Palette.elevatedHighlight).frame(width: 100, height: 8)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, Space.gutter).frame(height: Metrics.rowHeight)
+                .opacity(1 - Double(i) * 0.1)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading")
+    }
+}
+
+/// End of a paged list whose next page failed: says so and retries in place.
+struct LoadMoreFailedRow: View {
+    var text = "Couldn't load more"
+    let retry: () -> Void
+    var body: some View {
+        HStack {
+            Text(text).font(Typo.font(14)).foregroundStyle(Palette.subdued)
+            Spacer()
+            Button("Try again", action: retry).font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
+        }
+        .padding(.horizontal, Space.gutter).frame(height: 56)
+        .accessibilityIdentifier("load-more-failed")
+    }
+}
+
 /// Our own library glyph (three spines and a leaning one); Phosphor has no close match.
+/// Spotify's current Your Library glyph: two upright bars and a book standing beside them; the book
+/// fills when the tab is selected.
 struct LibraryGlyph: View {
     var filled = false
     var size: CGFloat = 24
     var body: some View {
         Canvas { ctx, sz in
             let s = sz.width / 24
-            let w: CGFloat = filled ? 2.6 : 2
-            for x in [4.0, 9.0] {
-                ctx.fill(Path(roundedRect: CGRect(x: x * s, y: 3 * s, width: w * s, height: 18 * s), cornerRadius: 1 * s), with: .foreground)
+            for x in [3.0, 8.0] {
+                ctx.fill(Path(roundedRect: CGRect(x: x * s, y: 3 * s, width: 2 * s, height: 18 * s), cornerRadius: 1 * s), with: .foreground)
             }
-            var lean = Path(roundedRect: CGRect(x: 0, y: 0, width: w * s, height: 18.5 * s), cornerRadius: 1 * s)
-            lean = lean.applying(CGAffineTransform(rotationAngle: -.pi / 9).concatenating(CGAffineTransform(translationX: 13.5 * s, y: 3.6 * s)))
-            ctx.fill(lean, with: .foreground)
+            // The book leans: its top edge rises from left to right (Spotify's glyph).
+            var book = Path()
+            book.move(to: CGPoint(x: 14 * s, y: 6 * s))
+            book.addLine(to: CGPoint(x: 20 * s, y: 3.5 * s))
+            book.addLine(to: CGPoint(x: 20 * s, y: 20 * s))
+            book.addLine(to: CGPoint(x: 14 * s, y: 20 * s))
+            book.closeSubpath()
+            let edge = StrokeStyle(lineWidth: 2 * s, lineCap: .round, lineJoin: .round)
+            if filled { ctx.fill(book, with: .foreground) }
+            ctx.stroke(book, with: .foreground, style: edge)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// Search glyph: a ring and handle that thicken when the tab is selected (Spotify), never a filled lens.
+struct SearchGlyph: View {
+    var bold = false
+    var size: CGFloat = 24
+    var body: some View {
+        Canvas { ctx, sz in
+            let s = sz.width / 24, w = (bold ? 2.8 : 2) * s
+            var p = Path(ellipseIn: CGRect(x: 3 * s, y: 3 * s, width: 15 * s, height: 15 * s))
+            p.move(to: CGPoint(x: 15.6 * s, y: 15.6 * s)); p.addLine(to: CGPoint(x: 21 * s, y: 21 * s))
+            ctx.stroke(p, with: .foreground, style: StrokeStyle(lineWidth: w, lineCap: .round))
         }
         .frame(width: size, height: size)
     }
@@ -39,16 +174,41 @@ struct LibraryGlyph: View {
 struct Chip: View {
     let title: String
     var selected = false
+    /// Home's tighter chips (Spotify: 13 pt text, ~11 pt sides); Library and Search keep 14/16.
+    var compact = false
     var action: () -> Void = {}
     var body: some View {
         Button(action: action) {
-            Text(title).font(Typo.chip)
+            Text(title).font(compact ? Typo.font(13, .medium) : Typo.chip)
                 .foregroundStyle(selected ? Color.black : Palette.text)
-                .padding(.horizontal, 16).frame(height: Metrics.chipHeight)
-                .background(Capsule().fill(selected ? Palette.accent : Color(hex: "#2a2a2a")))
+                .padding(.horizontal, compact ? 11 : 16).frame(height: Metrics.chipHeight)
+                .background { if selected { Capsule().fill(Palette.accent) } }
+                .modifier(GlassCapsule(on: !selected))
         }
         .buttonStyle(PressScale())
     }
+}
+
+/// Spotify's iOS 26 pills: Liquid Glass (dark, with a lit rim), not a flat grey fill. Before iOS 26,
+/// a material with a top-lit hairline stands in.
+struct GlassCapsule: ViewModifier {
+    var on = true
+    func body(content: Content) -> some View {
+        if !on {
+            content
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            content
+                .background(Capsule().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
+                .overlay(Capsule().strokeBorder(LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.05)],
+                                                               startPoint: .top, endPoint: .bottom), lineWidth: 1))
+        }
+    }
+}
+
+extension View {
+    func glassCapsule() -> some View { modifier(GlassCapsule()) }
 }
 
 /// Press feedback by scale alone (play buttons keep their colour).
@@ -83,8 +243,7 @@ struct PlayCircleButton: View {
                     if loading {
                         ProgressView().tint(.black)
                     } else {
-                        Icon(name: playing ? "pause" : "play", fill: true, size: size * 0.42).foregroundStyle(.black)
-                            .offset(x: playing ? 0 : size * 0.03)
+                        PlayPauseGlyph(playing: playing, size: size).foregroundStyle(.black)
                     }
                 }
         }
@@ -172,7 +331,7 @@ struct TrackRow: View {
                     }
                 }.frame(width: 24)
             }
-            if showArt { ArtImage(url: song.thumbnail, px: 144, radius: Radius.xs).frame(width: Metrics.rowArt, height: Metrics.rowArt) }
+            if showArt { ArtImage(url: song.thumbnail, px: 144, radius: Radius.xs, fallback: ArtRef(id: song.videoId, title: song.title)).frame(width: Metrics.rowArt, height: Metrics.rowArt) }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     // The playing row: equaliser before the title (rows with a number show it there instead).
@@ -298,7 +457,10 @@ struct RowSwipe: ViewModifier {
     private var swipe: some Gesture {
         DragGesture(minimumDistance: 14)
             .onChanged { v in
-                if axis == nil { axis = abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical }
+                if axis == nil {
+                    let edge = v.translation.width > 0 && v.startLocation.x < 40
+                    axis = !edge && abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical
+                }
                 guard axis == .horizontal else { return }
                 changed(v.translation.width)
             }
@@ -336,10 +498,16 @@ struct RowPan: UIGestureRecognizerRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
             guard let p = g as? UIPanGestureRecognizer else { return true }
-            if let w = p.view?.window, p.location(in: w).x < 24 { return false }
             let v = p.velocity(in: p.view), t = p.translation(in: p.view)
             let x = abs(v.x) + abs(v.y) > 1 ? v : CGPoint(x: t.x, y: t.y)
+            // A rightward drag starting in the left 15% of the screen is the back swipe, not "queue".
+            if let w = p.view?.window, x.x > 0, p.location(in: w).x - t.x < max(56, w.bounds.width * 0.15) { return false }
             return abs(x.x) > abs(x.y) * 1.2
+        }
+
+        /// The navigation back swipe always gets first claim.
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
+            other is UIScreenEdgePanGestureRecognizer
         }
 
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
@@ -448,10 +616,11 @@ struct MediaCard: View {
     var circle = false
     var size: CGFloat = Metrics.card
     var liked = false
+    var fallback: ArtRef? = nil
     var body: some View {
         VStack(alignment: circle ? .center : .leading, spacing: Space.s) {
             if liked { LikedCover(size: size) } else {
-                ArtImage(url: thumbnail, px: 360, radius: Radius.s, circle: circle).frame(width: size, height: size)
+                ArtImage(url: thumbnail, px: 360, radius: Radius.s, circle: circle, fallback: fallback).frame(width: size, height: size)
             }
             VStack(alignment: circle ? .center : .leading, spacing: 2) {
                 Text(title).font(Typo.cardTitle).foregroundStyle(Palette.text).lineLimit(circle ? 1 : 2)
@@ -499,6 +668,11 @@ struct Avatar: View {
     var body: some View {
         Circle().fill(Color(hex: "#f573a0")).frame(width: size, height: size)
             .overlay(Text(String(app.localUser.prefix(1)).uppercased()).font(Typo.font(size * 0.45, .bold)).foregroundStyle(.black))
+            .overlay {
+                if let photo = ProfilePhoto.shared.image {
+                    Image(uiImage: photo).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if opensMenu && app.settings.whatsNewCount > 0 {
                     Circle().fill(Palette.announcement).frame(width: size * 0.3, height: size * 0.3)

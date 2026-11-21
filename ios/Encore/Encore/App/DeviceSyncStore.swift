@@ -16,6 +16,10 @@ final class DeviceSyncStore {
 
     let core: CoreClient
     var status = SyncStatus.unlinked
+    /// Linked devices playing something right now (Spotify's "Playing on <device>").
+    var remotes: [RemoteDevice] = []
+    /// The one to show: playing first, then the freshest.
+    var activeRemote: RemoteDevice? { remotes.first { $0.playing } ?? remotes.first }
 
     // the linking sheet
     var sheetOpen = false
@@ -26,6 +30,9 @@ final class DeviceSyncStore {
     var digits = ""
     var busy = false
     var error: PairingError?
+    @ObservationIgnored private var joinTask: Task<Void, Never>?
+    /// The join's own 20 s timer ran out (as opposed to the user closing or going back).
+    @ObservationIgnored private var joinTimedOut = false
     /// Tests and screenshots: a fixed clock for the countdown.
     var nowOverride: Double?
     /// 200 ms waits for Bonjour to find a device showing a code before joining (tests: 0).
@@ -73,12 +80,27 @@ final class DeviceSyncStore {
     func setActive(_ active: Bool) {
         Task {
             if let s = try? await core.syncSetActive(active) { apply(s) }
+            if active { refreshRemotes() }
         }
     }
 
     /// Every status from the core (`sync-changed` and command answers).
+    func refreshRemotes() {
+        guard status.paired else { remotes = []; return }
+        Task { if let r = try? await core.presenceList() { remotes = r } }
+    }
+
+    /// play / pause / next / prev on another device; shown at once, confirmed by its next presence.
+    func control(_ d: RemoteDevice, _ cmd: String) {
+        if let i = remotes.firstIndex(where: { $0.dev == d.dev }), cmd == "play" || cmd == "pause" { remotes[i].playing = cmd == "play" }
+        Haptics.selection()
+        Task { try? await core.presenceSend(dev: d.dev, cmd: cmd) }
+    }
+
     func apply(_ s: SyncStatus) {
+        let wasPaired = status.paired
         status = s
+        if s.paired != wasPaired { refreshRemotes() }
         guard step == .showCode, let shown, codeEnd == nil else { return }
         if s.pairing?.code == shown.code { sawCode = true; return }
         guard sawCode, s.pairing == nil else { return }
@@ -92,15 +114,20 @@ final class DeviceSyncStore {
 
     // MARK: Settings › Devices
 
-    func syncNow() {
+    /// `fail` gets the sentence to show when the core refuses (the card keeps its state).
+    func syncNow(fail: @escaping @MainActor (String) -> Void) {
         Task {
-            if let s = try? await core.syncNow() { apply(s) }
+            do { apply(try await core.syncNow()) } catch {
+                fail(friendlyError(error, "Couldn't sync. Check that both devices are on the same Wi-Fi."))
+            }
         }
     }
 
-    func unlink() {
+    func unlink(done: @escaping @MainActor () -> Void, fail: @escaping @MainActor (String) -> Void) {
         Task {
-            if let s = try? await core.syncUnpair() { apply(s) }
+            do { apply(try await core.syncUnpair()); done() } catch {
+                fail(friendlyError(error, "Couldn't unlink. Try again."))
+            }
         }
     }
 
@@ -124,6 +151,7 @@ final class DeviceSyncStore {
 
     func go(_ s: Step) {
         error = nil
+        joinTask?.cancel(); joinTask = nil
         if step == .showCode && s != .showCode { cancelCode() }
         withAnimation(Motion.spring) { step = s }
         switch s {
@@ -135,6 +163,7 @@ final class DeviceSyncStore {
 
     /// The sheet went away (Done, Cancel or a swipe).
     func closed() {
+        joinTask?.cancel(); joinTask = nil
         if step == .showCode && codeEnd == nil { cancelCode() }
         bonjour.stop()
         advertiser.stop()
@@ -150,11 +179,19 @@ final class DeviceSyncStore {
         peersAtStart = status.peers.count
         pairedAtStart = status.paired
         busy = true
+        // ponytail: 20 s for the core to open the pairing port; a slower answer is ignored (and cancelled).
+        let timeout = Task {
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled, self.step == .showCode, self.shown == nil, self.busy else { return }
+            self.busy = false
+            self.error = PairingError.from("unreachable")
+            Haptics.error()
+        }
         Task {
-            defer { busy = false }
+            defer { busy = false; timeout.cancel() }
             do {
                 let p = try await core.syncStartPairing()
-                guard step == .showCode else { _ = try? await core.syncCancelPairing(); return }
+                guard step == .showCode, error == nil else { _ = try? await core.syncCancelPairing(); return }
                 shown = p.pairing
                 advertiser.start(dev: status.deviceId.isEmpty ? UUID().uuidString : status.deviceId, port: p.port)
                 // The status that carries this code (events may have raced the answer).
@@ -193,8 +230,21 @@ final class DeviceSyncStore {
         if qr == nil && digits.count != 6 { error = PairingError.from("bad_code"); return }
         busy = true; error = nil
         bonjour.start()
-        Task {
+        joinTask?.cancel()
+        joinTimedOut = false
+        joinTask = Task {
             defer { busy = false }
+            // ponytail: 20 s for the whole join; per-host timeouts if one dead host eats it all.
+            let timeout = Task {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                guard !Task.isCancelled else { return }
+                self.joinTimedOut = true
+                self.joinTask?.cancel()
+                self.busy = false
+                self.error = PairingError.from("unreachable")
+                Haptics.error()
+            }
+            defer { timeout.cancel() }
             var hosts: [SyncBonjour.Host] = []
             if qr == nil {
                 // A device showing a code advertises it: give Bonjour a moment to find it.
@@ -207,10 +257,13 @@ final class DeviceSyncStore {
             for host in hosts.isEmpty ? [nil] : hosts.map(Optional.some) {
                 do {
                     let s = try await core.syncJoin(code: qr == nil ? digits : nil, qr: qr, host: host?.host, port: host?.port)
+                    // Closed, went back or timed out meanwhile: don't jump to Linked behind the user's back.
+                    guard !Task.isCancelled else { return }
                     apply(s)
                     linked()
                     return
                 } catch {
+                    if Task.isCancelled { return }
                     let e = PairingError.from(FriendlyError.raw(error))
                     last = e
                     if e.kind != .unreachable { break }
@@ -219,6 +272,7 @@ final class DeviceSyncStore {
             if let e = last, e.kind == .unreachable || e.kind == .other, bonjour.denied {
                 last = .localNetwork
             }
+            if Task.isCancelled { return }
             error = last
             if last?.kind != .unreachable && last?.kind != .localNetwork && last?.kind != .other { digits = "" }
             Haptics.error()

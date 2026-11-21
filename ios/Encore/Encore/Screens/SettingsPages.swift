@@ -2,6 +2,7 @@
 // data-saving and offline, media quality, storage, recover playlists, about, and the equalizer.
 // Every switch here does something (stream ios-p2): Canvas, Gapless, notifications and "Recently
 // played artists" had nothing behind them on iPhone and are gone.
+import PhotosUI
 import SwiftUI
 
 struct SettingsPageView: View {
@@ -36,20 +37,54 @@ struct SettingsPageView: View {
 private struct AccountSettings: View {
     @Environment(AppModel.self) private var app
     @State private var confirmSignOut = false
+    @State private var photoMenu = false
+    @State private var pickerOpen = false
+    @State private var pick: PhotosPickerItem?
 
     var body: some View {
         @Bindable var store = app.account
         let a = store.account
         SettingsHeader(title: "Your profile")
-        HStack(spacing: Space.m) {
-            ProfileAvatar(size: 48)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(app.localUser).font(Typo.font(16, .bold))
-                Text(store.signedIn ? "Signed in to YouTube Music" : "Local profile")
-                    .font(Typo.font(13)).foregroundStyle(Palette.subdued)
+        Button { photoMenu = true } label: {
+            HStack(spacing: Space.m) {
+                ProfileAvatar(size: 48)
+                    .overlay(alignment: .bottomTrailing) {
+                        Circle().fill(Palette.elevatedHighlight).frame(width: 20, height: 20)
+                            .overlay(Icon(name: "camera", size: 12).foregroundStyle(Palette.text))
+                            .overlay(Circle().stroke(Palette.base, lineWidth: 2))
+                            .offset(x: 2, y: 2)
+                    }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(app.localUser).font(Typo.font(16, .bold)).lineLimit(1)
+                    Text(ProfilePhoto.shared.image == nil ? "Add a profile photo" : "Change profile photo")
+                        .font(Typo.font(13)).foregroundStyle(Palette.subdued)
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, Space.gutter).padding(.vertical, Space.s)
+        .accessibilityIdentifier("profile-photo")
+        .confirmationDialog("Profile photo", isPresented: $photoMenu) {
+            Button("Choose photo") { pickerOpen = true }
+            if ProfilePhoto.shared.image != nil {
+                Button("Remove photo", role: .destructive) { ProfilePhoto.shared.remove(); app.showToast("Profile photo removed") }
             }
         }
-        .padding(.horizontal, Space.gutter).padding(.vertical, Space.s)
+        .photosPicker(isPresented: $pickerOpen, selection: $pick, matching: .images)
+        .onChange(of: pick) { _, item in
+            guard let item else { return }
+            Task {
+                defer { pick = nil }
+                guard let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) else {
+                    return app.fail("Couldn't open that photo")
+                }
+                do { try ProfilePhoto.shared.set(img); app.showToast("Profile photo updated") } catch {
+                    app.fail("Couldn't save that photo")
+                }
+            }
+        }
         SettingsNote(text: "Spotless works without an account. Your library, likes and history are stored on this iPhone.")
         SettingsHeader(title: "YouTube account")
         if store.signedIn {
@@ -71,7 +106,12 @@ private struct AccountSettings: View {
         } else if a.signedIn && a.selectionRequired == true {
             SettingsNote(text: "Signed in to Google. Pick which YouTube channel to use.")
             pill("Choose a channel", id: "youtube-choose") {
-                Task { store.identities = (try? await app.core.asAccount?.accountIdentities()) ?? []; store.signInOpen = true }
+                Task {
+                    do {
+                        store.identities = try await app.core.asAccount?.accountIdentities() ?? []
+                        if store.identities.isEmpty { app.showToast("Couldn't load your YouTube channels. Try again.") } else { store.signInOpen = true }
+                    } catch { app.fail(friendlyError(error, "Couldn't load your YouTube channels")) }
+                }
             }
         } else {
             SettingsNote(text: "Optional. Sign in to bring your YouTube Music likes, playlists and subscriptions. You sign in on Google's own page; Spotless never sees your password.")
@@ -255,12 +295,12 @@ private struct DataSaverSettings: View {
         SettingsToggleRow(title: "Offline mode", subtitle: "When you go offline, you'll only be able to play the music and podcasts you've downloaded.",
                           isOn: Binding(get: { d.snapshot.network.offlineMode }, set: { on in
                               d.snapshot.network.offlineMode = on
-                              d.set(DownloadSettingsPatch(offlineMode: on))
+                              d.set(DownloadSettingsPatch(offlineMode: on)) { d.snapshot.network.offlineMode = !on }
                           }))
         SettingsToggleRow(title: "Download using cellular", subtitle: "Recommended setting: Off",
                           isOn: Binding(get: { d.snapshot.network.allowMetered }, set: { on in
                               d.snapshot.network.allowMetered = on
-                              d.set(DownloadSettingsPatch(allowMetered: on))
+                              d.set(DownloadSettingsPatch(allowMetered: on)) { d.snapshot.network.allowMetered = !on }
                           }))
         SettingsNavRow(icon: "hard-drives", title: "Storage", subtitle: "Downloads and cache") { app.router.push(.settingsPage(.storage)) }
     }
@@ -292,7 +332,7 @@ private struct QualitySettings: View {
         SettingsToggleRow(title: "Download using cellular", subtitle: "Recommended setting: Off",
                           isOn: Binding(get: { d.snapshot.network.allowMetered }, set: { on in
                               d.snapshot.network.allowMetered = on
-                              d.set(DownloadSettingsPatch(allowMetered: on))
+                              d.set(DownloadSettingsPatch(allowMetered: on)) { d.snapshot.network.allowMetered = !on }
                           }))
         SettingsNote(text: "Higher quality uses more data and storage.")
     }
@@ -338,20 +378,26 @@ private struct StorageSettings: View {
         }
         .padding(.horizontal, Space.gutter).padding(.top, Space.xl)
         SettingsHeader(title: "Downloads")
-        SettingsNote(text: "\(app.downloads.snapshot.count) songs and episodes, \(fmt(dl)).")
+        SettingsNote(text: "\(counted(app.downloads.snapshot.count, "song or episode", "songs and episodes")), \(fmt(dl)).")
+        if app.downloads.anyStorageFull {
+            SettingsNote(text: "Your iPhone is out of space, so some downloads couldn't finish. Free up space, then tap Retry.")
+        } else if let why = app.downloads.pausedReason { SettingsNote(text: "Downloads are paused: \(why.lowercased()).") }
+        DownloadsRetryRow()
         actionButton("Remove all downloads") {
             app.confirm = ConfirmRequest(title: "Remove all downloads?", message: "You won't be able to play them offline.", action: "Remove") {
-                app.downloads.removeAll()
-                app.showToast("Downloads removed")
+                let t = app.downloads.removeAll()
+                Task { if await t.value { app.showToast("Downloads removed") } }
             }
         }
         SettingsHeader(title: "Cache")
         SettingsNote(text: "Temporary audio and artwork that make playback start faster.")
         actionButton("Clear cache") {
             Task {
-                try? await app.core.clearCaches()
+                do {
+                    try await app.core.clearCaches()
+                    app.showToast("Cache cleared")
+                } catch { app.fail(friendlyError(error, "Couldn't clear the cache")) }
                 cacheBytes = (try? await app.core.cacheSize()) ?? 0
-                app.showToast("Cache cleared")
             }
         }
         .task { cacheBytes = (try? await app.core.cacheSize()) ?? 0 }

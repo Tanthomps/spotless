@@ -1001,6 +1001,7 @@ mod tests {
             failed: 0,
             bytes: 0,
             added_at,
+            storage_full: false,
         }
     }
 

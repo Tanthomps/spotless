@@ -95,6 +95,8 @@ final class PlayerStore {
         position = t
         actions.run("seek", "Couldn't jump to that point", revert: { [weak self] in self?.position = was }) { [core] in try await core.seek(position: t) }
     }
+    /// ±15 s on episodes and videos: a failure says so.
+    func seekBy(_ secs: Double) { actions.run("seek", "Couldn't skip \(secs < 0 ? "back" : "ahead")") { [core] in _ = try await core.seekRelative(secs) } }
     func toggleShuffle() { actions.run("shuffle", "Couldn't change shuffle") { [core] in try await core.toggleShuffle() } }
     func cycleRepeat() {
         let next: RepeatMode = switch repeatMode { case .off: .all; case .all: .one; case .one: .off }
@@ -165,8 +167,17 @@ final class LibraryStore {
         return max(secs(snapshot.lastPlayed[id] ?? 0), secs(snapshot.lastTouched?[id] ?? 0), secs(base), touches[id] ?? 0)
     }
 
+    /// The first snapshot has arrived (until then Your Library shows placeholders, not "empty").
+    var loaded = false
+    /// The first snapshot failed: Your Library says so with Try again (a later failure keeps what's shown).
+    var failed = false
     func refresh() async {
-        if let s = try? await core.librarySnapshot() { snapshot = s; likedIds = Set(s.likedIds) }
+        do {
+            let s = try await core.librarySnapshot()
+            snapshot = s; likedIds = Set(s.likedIds); loaded = true; failed = false
+        } catch {
+            if !FriendlyError.isCancellation(error) && !loaded { failed = true }
+        }
         if let r = try? await core.recentContexts(limit: 50) { recents = r }
     }
 
@@ -259,6 +270,7 @@ enum SheetSubject: Identifiable, Equatable {
     case aboutRecommendations
     case newFolder
     case newPlaylist
+    case newCollab
     /// Spotify's "Add to playlist" picker (also "Saved in" from a liked song's check button).
     case addToPlaylist([SongItem])
     /// Own playlists: Edit playlist, and Add to this playlist (id, name).
@@ -279,6 +291,7 @@ enum SheetSubject: Identifiable, Equatable {
         case .aboutRecommendations: "aboutRecs"
         case .newFolder: "newFolder"
         case .newPlaylist: "newPlaylist"
+        case .newCollab: "newCollab"
         case .addToPlaylist(let s): "add:\(s.map(\.videoId).joined(separator: ","))"
         case .editPlaylist(let id): "edit:\(id)"
         case .addSongs(let id, _): "addSongs:\(id)"
@@ -309,6 +322,9 @@ final class AppModel {
     let account: AccountStore
     /// Device sync: Settings › Devices, the linking sheet, the welcome and the Home hint.
     let devices: DeviceSyncStore
+    /// Jam and collaborative playlists over the share relay (App/JamCollabStores.swift).
+    @ObservationIgnored private(set) var jam: JamStore!
+    @ObservationIgnored private(set) var collab: CollabStore!
     let router = Router()
     var toast: ToastMessage?
     /// Music's tempo, pitch and reverb for this session (Speed & pitch, `setEffects`).
@@ -374,6 +390,9 @@ final class AppModel {
             a.report = { [weak self] sentence in self?.fail(sentence) }
         }
         downloads.onOfflineChange = { [weak self] off in self?.offlineChanged(off) }
+        jam = JamStore(app: self)
+        collab = CollabStore(app: self)
+        collab.resume()
     }
 
     static func defaultPrefs(for core: CoreClient) -> UserDefaults? {
@@ -486,7 +505,7 @@ final class AppModel {
             } else { library.likedIds.remove(id) }
         case .libraryChanged(let scope):
             Task {
-                if scope == "podcasts" || scope == "episodes" { await podcasts.refresh() } else { await library.refresh() }
+                if scope == "podcasts" || scope == "episodes" { await podcasts.refresh() } else { await library.refresh(); collab.libraryChanged() }
             }
         case .podcastProgress(let id, let p): podcasts.progress[id] = p
         case .downloadsChanged:
@@ -509,6 +528,7 @@ final class AppModel {
         // Only an episode's rate is the remembered one.
         case .playbackParams(let e): if currentIsEpisode { settings.speed = e.speed }
         case .syncChanged(let s): devices.apply(s)
+        case .presenceChanged(let r): devices.remotes = r
         case .unknown(let name): account.handle(event: name)
         }
         player.timeTap() // stream: instant
@@ -531,12 +551,12 @@ final class AppModel {
     }
 
     func showToast(_ text: String, action: String? = nil, run: (@MainActor () -> Void)? = nil) {
-        withAnimation(Motion.spring) { toast = ToastMessage(text: text, action: action, run: run) }
+        withAnimation(Motion.land) { toast = ToastMessage(text: text, action: action, run: run) }
         toastTask?.cancel()
         toastTask = Task {
             try? await Task.sleep(nanoseconds: run == nil ? 3_000_000_000 : 5_000_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(Motion.quick) { toast = nil }
+            withAnimation(Motion.exit) { toast = nil }
         }
     }
 
@@ -570,12 +590,12 @@ final class AppModel {
     func playNext(_ songs: [SongItem], from: String? = nil) {
         let t = player.playNext(songs, from: from)
         Haptics.impact(.medium)
-        Task { if await t.value { showToast(songs.count == 1 ? "Playing next" : "Playing \(songs.count) songs next") } }
+        Task { if await t.value { showToast(songs.count == 1 ? "Playing next" : "Playing \(counted(songs.count, "song")) next") } }
     }
 
     func queue(_ songs: [SongItem], from: String? = nil) {
         let t = player.addToQueue(songs, from: from)
-        Task { if await t.value { showToast(songs.count == 1 ? "Added to queue" : "Added \(songs.count) songs to queue") } }
+        Task { if await t.value { showToast(songs.count == 1 ? "Added to queue" : "Added \(counted(songs.count, "song")) to queue") } }
     }
 }
 

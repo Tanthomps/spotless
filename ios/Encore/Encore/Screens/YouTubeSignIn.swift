@@ -27,6 +27,9 @@ final class AccountStore {
     /// The sign-in sheet.
     var signInOpen = false
     var busy = false
+    /// Re-minting the session failed: YouTube calls will fail until the user signs in again.
+    var sessionExpired = false
+    struct NoChannels: Error {}
 
     @ObservationIgnored private var lastRefresh: Date?
     @ObservationIgnored private var refresher: SessionRefresher?
@@ -72,7 +75,11 @@ final class AccountStore {
         defer { busy = false }
         let a = try await client.accountSignIn(cookie: header, expectAccount: nil)
         apply(a)
-        if a.selectionRequired == true { identities = (try? await client.accountIdentities()) ?? [] }
+        if a.selectionRequired == true {
+            identities = try await client.accountIdentities()
+            if identities.isEmpty { throw NoChannels() }
+        }
+        sessionExpired = false
         return true
     }
 
@@ -116,10 +123,12 @@ final class AccountStore {
         let r = SessionRefresher()
         refresher = r
         defer { refresher = nil }
-        guard let cookies = await r.run() else { return }
+        guard let cookies = await r.run() else { sessionExpired = true; return }
         let header = YouTubeCookies.header(cookies)
-        guard let sapisid = YouTubeCookies.sapisid(header) else { return }
-        if let a = try? await client?.accountSignIn(cookie: header, expectAccount: sapisid) { apply(a) }
+        guard let sapisid = YouTubeCookies.sapisid(header) else { sessionExpired = true; return }
+        do {
+            if let a = try await client?.accountSignIn(cookie: header, expectAccount: sapisid) { apply(a); sessionExpired = false }
+        } catch { sessionExpired = true }
     }
 }
 
@@ -237,11 +246,14 @@ struct YouTubeSignInSheet: View {
                         guard try await store.complete(with: cookies) else { return false }
                         if store.identities.isEmpty { finish() }
                         return true
+                    } catch is AccountStore.NoChannels {
+                        failed = "Google signed you in, but we couldn't load your YouTube channels. Try again."
+                        return true
                     } catch {
                         failed = "Google signed you in, but YouTube Music didn't accept the session. Try again in a moment."
                         return true
                     }
-                }
+                } onFail: { failed = $0 }
                 .accessibilityIdentifier("signin-web")
             }
         }
@@ -296,6 +308,8 @@ private struct SignInWebView: UIViewRepresentable {
     let mock: Bool
     @Binding var loading: Bool
     let onLanded: @MainActor ([HTTPCookie]) async -> Bool
+    /// Google's page couldn't load (offline, blocked): the sheet shows its Try again panel.
+    var onFail: @MainActor (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -353,9 +367,15 @@ private struct SignInWebView: UIViewRepresentable {
             }
         }
 
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { parent.loading = false }
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
+        private func failed(_ error: Error) {
             parent.loading = false
+            // A redirect or a page replacing itself cancels the old load: not a failure.
+            let e = error as NSError
+            guard !(e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled), !handled else { return }
+            parent.onFail(e.domain == NSURLErrorDomain && [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut].contains(e.code)
+                          ? "Couldn't reach Google. Check your connection." : "Google's sign-in page didn't load. Try again.")
         }
     }
 }
@@ -380,11 +400,43 @@ struct AccountPhoto: View {
 }
 
 /// The profile avatar in Settings: the YouTube account's photo when signed in, else the app's.
+/// Your own profile photo (Settings › Account), kept on this iPhone. It wins over the YouTube photo.
+@MainActor @Observable final class ProfilePhoto {
+    static let shared = ProfilePhoto()
+    private(set) var image: UIImage?
+    private static var file: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("profile-photo.jpg")
+    }
+    private init() { image = UIImage(contentsOfFile: Self.file.path) }
+
+    /// Square-cropped from the centre at up to 600 px: it's only ever shown as a small circle.
+    func set(_ picked: UIImage) throws {
+        let side = min(picked.size.width, picked.size.height)
+        let out = min(600, side)
+        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
+        let square = UIGraphicsImageRenderer(size: CGSize(width: out, height: out), format: fmt).image { _ in
+            let k = out / side, w = picked.size.width * k, h = picked.size.height * k
+            picked.draw(in: CGRect(x: (out - w) / 2, y: (out - h) / 2, width: w, height: h))
+        }
+        guard let data = square.jpegData(compressionQuality: 0.9) else { throw CocoaError(.fileWriteUnknown) }
+        try data.write(to: Self.file, options: .atomic)
+        image = square
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: Self.file)
+        image = nil
+    }
+}
+
 struct ProfileAvatar: View {
     @Environment(AppModel.self) private var app
     let size: CGFloat
     var body: some View {
-        if app.account.signedIn {
+        if let photo = ProfilePhoto.shared.image {
+            Image(uiImage: photo).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+                .accessibilityLabel("Profile photo")
+        } else if app.account.signedIn {
             AccountPhoto(url: app.account.account.thumbnail, name: app.localUser, size: size)
         } else {
             Avatar(size: size, opensMenu: false)

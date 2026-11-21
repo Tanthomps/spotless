@@ -12,12 +12,23 @@ struct PodcastsSettings: View {
     @State private var twins = true
     @State private var importing = false
 
+    @State private var podsFailed = false
+    @State private var podsAttempt = 0
+
     var body: some View {
         let s = app.settings
         SettingsHeader(title: "Sponsored segments")
         SettingsToggleRow(title: "Skip sponsored segments", subtitle: "Skip sponsor reads and other segments in YouTube podcast episodes (SponsorBlock).",
                           isOn: Binding(get: { pods?.sponsorblock ?? false }, set: { on in patch(sponsorblock: on) }))
             .disabled(pods == nil)
+        if pods == nil && podsFailed {
+            HStack {
+                Text("Couldn't load your podcast settings.").font(Typo.font(13)).foregroundStyle(Palette.subdued)
+                Spacer()
+                Button("Try again") { podsFailed = false; podsAttempt += 1 }.font(Typo.font(13, .bold)).foregroundStyle(Palette.text)
+            }
+            .padding(.horizontal, Space.gutter)
+        }
         if let pods, pods.sponsorblock {
             ChipFlow(spacing: Space.s) {
                 ForEach(sponsorBlockCategories, id: \.id) { c in
@@ -36,7 +47,12 @@ struct PodcastsSettings: View {
         SettingsToggleRow(title: "Play ad-free YouTube versions", subtitle: "When a podcast episode is also on YouTube, play that version, without the ads inserted into the feed.",
                           isOn: Binding(get: { twins }, set: { on in
                               twins = on
-                              Task { twins = (try? await app.core.podcastSetYouTubeMatch(on)) ?? !on }
+                              Task {
+                                  do { twins = try await app.core.podcastSetYouTubeMatch(on) } catch {
+                                      twins = !on
+                                      app.fail(friendlyError(error, "Couldn't change ad-free episodes"))
+                                  }
+                              }
                           }))
         SettingsHeader(title: "Video podcasts")
         SettingsToggleRow(title: "Play as audio only", subtitle: "Video podcasts start without the picture. You can still switch to video in Now Playing.",
@@ -52,8 +68,8 @@ struct PodcastsSettings: View {
             .fileImporter(isPresented: $importing, allowedContentTypes: [UTType(filenameExtension: "opml") ?? .xml, .xml, .plainText]) { result in
                 if case .success(let url) = result { importOpml(url) }
             }
-            .task {
-                pods = try? await app.core.podcastSettings()
+            .task(id: podsAttempt) {
+                do { pods = try await app.core.podcastSettings() } catch { podsFailed = !FriendlyError.isCancellation(error) }
                 twins = (try? await app.core.podcastYouTubeMatch()) ?? true
             }
     }

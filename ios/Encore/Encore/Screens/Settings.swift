@@ -171,7 +171,7 @@ struct SettingsView: View {
                 HStack(spacing: Space.m) {
                     ProfileAvatar(size: 56)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(app.localUser).font(Typo.font(18, .bold))
+                        Text(app.localUser).font(Typo.font(18, .bold)).lineLimit(1)
                         Text(profileSubtitle(app)).font(Typo.font(13)).foregroundStyle(Palette.subdued)
                     }
                     Spacer()
@@ -207,7 +207,7 @@ struct SideMenu: View {
     var body: some View {
         let open = app.router.sideMenuOpen
         GeometryReader { geo in
-            let w = min(geo.size.width * 0.85, 340)
+            let w = min(geo.size.width * 0.9, 400)  // Spotify: 90% of the screen
             ZStack(alignment: .leading) {
                 Color.black.opacity(open ? 0.6 * Double(1 + min(0, dx) / w) : 0)
                     .ignoresSafeArea()
@@ -225,7 +225,7 @@ struct SideMenu: View {
                             withAnimation(Motion.spring) { dx = 0 }
                         })
             }
-            .animation(Motion.spring, value: open)
+            .animation(open ? Motion.spring : Motion.exit, value: open)
         }
         .allowsHitTesting(open)
         .accessibilityHidden(!open)
@@ -233,16 +233,18 @@ struct SideMenu: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Spotify: the profile sits in a raised rounded card, inset 8 pt, rows start 16 pt under it.
             HStack(spacing: Space.m) {
                 ProfileAvatar(size: 48)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(app.localUser).font(Typo.font(18, .bold))
-                    Text(profileSubtitle(app)).font(Typo.font(13)).foregroundStyle(Palette.subdued)
+                    Text(app.localUser).font(Typo.font(20, .bold)).lineLimit(1)
+                    Text(profileSubtitle(app)).font(Typo.font(15)).foregroundStyle(Palette.subdued)
                 }
                 Spacer()
             }
-            .padding(.horizontal, Space.gutter).padding(.top, Space.l).padding(.bottom, Space.l)
-            Divider().overlay(Palette.border)
+            .padding(.horizontal, Space.s).padding(.vertical, Space.m)
+            .background(RoundedRectangle(cornerRadius: Radius.xl, style: .continuous).fill(Palette.elevatedHighlight))
+            .padding(.horizontal, Space.s).padding(.top, Space.l).padding(.bottom, Space.l)
             menuRow("lightning", "What's new", dot: app.settings.whatsNewCount > 0) { go(.whatsNew) }
             menuRow("clock-counter-clockwise", "Recents", dot: false) { go(.history) }
             menuRow("chart-bar", "Listening stats", dot: false) { go(.stats) }
@@ -261,13 +263,14 @@ struct SideMenu: View {
 
     private func menuRow(_ icon: String, _ title: String, dot: Bool, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: Space.l) {
-                Icon(name: icon, size: 24)
-                Text(title).font(Typo.font(16, .medium))
-                if dot { Circle().fill(Palette.announcement).frame(width: 8, height: 8).accessibilityLabel("New") }
+            HStack(spacing: 10) {
+                Icon(name: icon, size: 26)
+                Text(title).font(Typo.font(17))
                 Spacer()
+                // Spotify puts the "new" dot at the row's right edge.
+                if dot { Circle().fill(Palette.announcement).frame(width: 8, height: 8).accessibilityLabel("New") }
             }
-            .padding(.horizontal, Space.gutter).frame(height: 56).contentShape(Rectangle())
+            .padding(.horizontal, Space.gutter).frame(height: 48).contentShape(Rectangle())
         }
         .buttonStyle(SettingsPressStyle())
     }
@@ -277,7 +280,7 @@ struct SideMenu: View {
         close()
     }
 
-    private func close() { withAnimation(Motion.spring) { app.router.sideMenuOpen = false } }
+    private func close() { withAnimation(Motion.exit) { app.router.sideMenuOpen = false } }
 }
 
 // MARK: sleep timer

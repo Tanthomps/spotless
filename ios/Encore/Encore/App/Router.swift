@@ -95,6 +95,8 @@ final class Router {
     var searchFocused = false
     /// The avatar's side menu (Spotify: What's new, Settings and privacy).
     var sideMenuOpen = false
+    /// The floating Create menu over the tab bar (Screens/JamCollab.swift).
+    var createOpen = false
     var searchQuery = ""
     /// Deep link `encore://search?q=…&chip=podcasts`: the results chip to start on.
     var searchCategory: String?
@@ -149,7 +151,7 @@ final class Router {
     func push(_ show: PodcastShow) { push(.show(show.id)) }
 
     func dismissOverlays() {
-        nowPlayingOpen = false; queueOpen = false; lyricsOpen = false; sideMenuOpen = false
+        nowPlayingOpen = false; queueOpen = false; lyricsOpen = false; sideMenuOpen = false; createOpen = false
     }
 
     /// encore://album/<id>, artist/<id>, playlist/<id>, liked, home, search[?q=], library, nowplaying,

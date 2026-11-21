@@ -19,6 +19,8 @@ final class HomeStore {
     var loaded = false
     /// The last try threw with nothing on screen: Home shows the error with Reload.
     var failed = false
+    /// The last `smart_home` call threw (shelves may still be on screen).
+    @ObservationIgnored var lastFetchFailed = false
 
     /// Loads `smart_home`. Online it retries with the desktop's backoff (2 s doubling, capped at
     /// 30 s) until YouTube's own shelves are in: a Home of only local shelves or moods means
@@ -45,8 +47,10 @@ final class HomeStore {
             if !got.isEmpty || !keepNonEmpty || shelves.isEmpty { shelves = got; loadedAt = Date() }
             loaded = true
             failed = false
+            lastFetchFailed = false
         } catch {
             failed = shelves.isEmpty
+            lastFetchFailed = !FriendlyError.isCancellation(error)
         }
     }
 
@@ -67,12 +71,24 @@ final class HomeStore {
 
     /// stream: audiobooks — the Audiobooks chip: one try; a failure keeps what was there.
     func loadAudiobooks() async {
-        if let got = try? await core.audiobookHome(), !got.isEmpty { audiobookShelves = got }
+        do {
+            let got = try await core.audiobookHome()
+            if !got.isEmpty { audiobookShelves = got }
+            audiobooksLoaded = true; audiobooksFailed = false
+        } catch { if !FriendlyError.isCancellation(error) { audiobooksFailed = audiobookShelves.isEmpty } }
     }
+    var audiobooksLoaded = false
+    var audiobooksFailed = false
+    var podcastsLoaded = false
+    var podcastsFailed = false
 
     /// The Podcasts chip: never empty in the core (fixed category tiles stand in), so one try.
     func loadPodcasts() async {
-        if let got = try? await core.podcastHome(), !got.isEmpty { podcastShelves = got }
+        do {
+            let got = try await core.podcastHome()
+            if !got.isEmpty { podcastShelves = got }
+            podcastsLoaded = true; podcastsFailed = false
+        } catch { if !FriendlyError.isCancellation(error) { podcastsFailed = podcastShelves.isEmpty } }
     }
 
     // MARK: pure helpers

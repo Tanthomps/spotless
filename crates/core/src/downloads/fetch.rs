@@ -25,6 +25,19 @@ use crate::state::AppState;
 /// Bounded request size, same as the audio proxy's.
 const CHUNK: u64 = 4 * 1024 * 1024;
 
+/// What a failed write is stored as: a full disk is `STORAGE_FULL` (the app says "Not enough
+/// storage" for it); anything else keeps its own words.
+pub const STORAGE_FULL: &str = "storage_full";
+
+fn disk_error(e: &std::io::Error) -> JobError {
+    // ENOSPC (28) and EDQUOT (69 on Darwin) both mean there is no room left.
+    if e.kind() == std::io::ErrorKind::StorageFull || matches!(e.raw_os_error(), Some(28) | Some(69)) {
+        JobError::Failed(STORAGE_FULL.into())
+    } else {
+        JobError::Failed(format!("disk: {e}"))
+    }
+}
+
 #[derive(Debug)]
 pub enum JobError {
     /// No network (or YouTube unreachable): don't count it, wait for the network.
@@ -317,7 +330,7 @@ where
             .create(true)
             .append(true)
             .open(&part)
-            .map_err(|e| JobError::Failed(e.to_string()))?;
+            .map_err(|e| disk_error(&e))?;
         let mut body = resp.bytes_stream();
         loop {
             let next = match crate::audioproxy::no_stall(body.next()).await {
@@ -329,7 +342,7 @@ where
             };
             match next {
                 Some(Ok(bytes)) => {
-                    file.write_all(&bytes).map_err(|e| JobError::Failed(format!("disk: {e}")))?;
+                    file.write_all(&bytes).map_err(|e| disk_error(&e))?;
                     have += bytes.len() as u64;
                     progress(have, total.unwrap_or(0));
                     if stop() {

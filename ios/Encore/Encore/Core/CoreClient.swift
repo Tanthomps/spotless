@@ -268,6 +268,10 @@ protocol CoreClient: AnyObject, Sendable {
     func syncUnpair() async throws -> SyncStatus                                           // sync_unpair
     func syncNow() async throws -> SyncStatus                                              // sync_now
     func syncSetActive(_ active: Bool) async throws -> SyncStatus                          // sync_set_active
+    /// Other linked devices playing something ("Playing on <device>").
+    func presenceList() async throws -> [RemoteDevice]                                     // presence_list
+    /// Control another linked device: play, pause, next, prev.
+    func presenceSend(dev: String, cmd: String) async throws                               // presence_send
 
     // events
     func setListener(_ listener: CoreEventListener?)
@@ -316,6 +320,7 @@ enum CoreEvent {
     case playbackParams(PlaybackEffects)
     /// Device sync's status changed (`sync-changed`); remote data also fires library/home events.
     case syncChanged(SyncStatus)
+    case presenceChanged([RemoteDevice])
     case unknown(String)
 
     static func decode(name: String, json: Data) -> CoreEvent {
@@ -354,6 +359,7 @@ enum CoreEvent {
         case "sync-changed":
             struct S: Decodable { var status: SyncStatus }
             if let s = try? d.decode(S.self, from: json) { return .syncChanged(s.status) }
+        case "presence-changed": if let p = try? d.decode([RemoteDevice].self, from: json) { return .presenceChanged(p) }
         case "playback-params":
             if let e = try? d.decode(PlaybackEffects.self, from: json) { return .playbackParams(e) }
         default: break

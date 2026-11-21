@@ -53,7 +53,7 @@ struct RecoverPlaylistsSettings: View {
     /// "12 songs • 29 days left".
     static func meta(_ p: DeletedPlaylist, now: Date = .now) -> String {
         let days = max(0, Int(((Double(p.purgeAt) - now.timeIntervalSince1970) / 86_400).rounded(.up)))
-        return "\(p.count) song\(p.count == 1 ? "" : "s") • \(days) day\(days == 1 ? "" : "s") left"
+        return "\(counted(p.count, "song")) • \(counted(days, "day")) left"
     }
 
     private func load() async {

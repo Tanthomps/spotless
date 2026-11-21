@@ -105,7 +105,7 @@ struct EntityScaffold<Header: View, Content: View>: View {
             HStack {
                 Button { dismiss() } label: {
                     Icon(name: "caret-left", size: 24).frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.black.opacity(heroHeader ? 0.4 * (1 - progress) : 0)))
+                        .background(Circle().fill(heroHeader ? (progress >= 1 ? Palette.highlight : Color.black.opacity(0.4)) : .clear))
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .accessibilityLabel("Back")
@@ -116,7 +116,7 @@ struct EntityScaffold<Header: View, Content: View>: View {
         }
         .frame(height: navHeight)
         .padding(.top, top)
-        .background((heroHeader ? (accent?.surface(value: 0.4) ?? Color(hex: "#3a3a3a")) : tint.mix(with: .black, by: 0.35)).opacity(progress))
+        .background((heroHeader ? Palette.base : tint.mix(with: .black, by: 0.35)).opacity(progress))
         .animation(.easeOut(duration: 0.15), value: progress >= 1)
     }
 }
@@ -188,10 +188,14 @@ struct EntityHeader: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, accessory == nil ? 60 : Space.l)
                 .padding(.bottom, Space.s)
+                .arriveBlock(0)
+            // The details settle a beat after the cover lands: title, description, owner, actions.
             Text(title).font(Typo.pageTitle).lineLimit(2).accessibilityAddTraits(.isHeader)
                 .modifier(TitleAnchor())
+                .arriveBlock(1)
             if let description, !description.isEmpty {
                 Text(description).font(Typo.meta).foregroundStyle(Palette.subdued).lineLimit(2)
+                    .arriveBlock(2)
             }
             if let owner {
                 HStack(spacing: Space.s) {
@@ -199,7 +203,7 @@ struct EntityHeader: View {
                     Text(owner).font(Typo.metaBold)
                 }
             }
-            Text(meta).font(Typo.meta).foregroundStyle(Palette.subdued)
+            Text(meta).font(Typo.meta).foregroundStyle(Palette.subdued).arriveBlock(3)
             // Action row: 56 pt, 24 pt icons on a 48 pt pitch; shuffle, 20 pt, then the 48 pt play button.
             HStack(spacing: Space.l + 4) {
                 actions
@@ -216,6 +220,7 @@ struct EntityHeader: View {
             }
             .frame(height: 56)
             .foregroundStyle(Palette.subdued)
+            .arriveBlock(4)
         }
         .padding(.horizontal, Space.gutter)
         .padding(.bottom, Space.s)
@@ -240,7 +245,7 @@ struct EntityLoadState: View {
                 .padding(.top, Space.s)
                 .accessibilityIdentifier("entity-retry")
             } else {
-                ProgressView().tint(Palette.subdued).accessibilityIdentifier("entity-loading")
+                SkeletonRows().accessibilityIdentifier("entity-loading")
             }
         }
         .frame(maxWidth: .infinity)
@@ -371,10 +376,19 @@ struct PlaylistView: View {
                         }) { playQueue(all, at: row.index) }
                     } else {
                         TrackRow(song: row.song, context: context) { playQueue(all, at: row.index) }
+                            .arriveRow(row.index)
                             .onAppear { if smarts.continuation != nil && row.index >= all.count - 10 { loadMore() } }
                     }
                 }
-                if smarts.loadingMore { ProgressView().tint(Palette.subdued).frame(maxWidth: .infinity).frame(height: 56) }
+                if smarts.loadingMore { SkeletonRows(count: 2) }
+                if smarts.moreFailed && !smarts.loadingMore {
+                    LoadMoreFailedRow(text: "Couldn't load more songs") {
+                        smarts.moreFailed = false
+                        if smarts.continuation == nil, let p = page {
+                            Task { await smarts.loadContinuation(app, id: id, count: p.items.count); if smarts.continuation != nil { loadMore() } }
+                        } else { loadMore() }
+                    }
+                }
                 if finding && rows.isEmpty { FindNoMatch(query: query) }
                 if page == nil { EntityLoadState(failed: failed) { failed = false; attempt += 1 } }
                 // The desktop's empty states: Liked Songs points at Search; someone else's says so.
@@ -406,15 +420,15 @@ struct PlaylistView: View {
             PlaylistSortSheet(options: PlaylistViewSort.options(liked: isLiked), selected: sort) { setSort($0) }
         }
         .onChange(of: app.library.likedIds) { _, _ in
-            if isLiked { Task { page = try? await app.core.getPlaylist(id: id) } }
+            if isLiked { Task { await reload() } }
         }
         // An own playlist edited anywhere (add, edit, rename): reload its page. One on the YouTube
         // account says so through the core's `touched` stamp.
         .onChange(of: app.library.snapshot.playlists.first { $0.id == id }) { _, p in
-            if p != nil { Task { page = try? await app.core.getPlaylist(id: id) } }
+            if p != nil { Task { await reload() } }
         }
         .onChange(of: app.library.snapshot.lastTouched?[id]) { _, t in
-            if t != nil && !isLocal && !isLiked { Task { page = try? await app.core.getPlaylist(id: id) } }
+            if t != nil && !isLocal && !isLiked { Task { await reload() } }
         }
     }
 
@@ -438,7 +452,12 @@ struct PlaylistView: View {
         PlaylistViewSort.store(s == defaultSort ? nil : s, for: id)
         // A playlist you own on YouTube keeps the order there too, so every client shows it.
         if page?.owned == true && !isLocal && !isLiked && !isMfy {
-            Task { try? await app.core.setPlaylistSort(playlistId: id, sort: s.server) }
+            Task {
+                do { try await app.core.setPlaylistSort(playlistId: id, sort: s.server) } catch {
+                    // Shown here already; only YouTube's copy keeps the old order. Say so.
+                    app.fail(friendlyError(error, "Sorted here, but couldn't save the order to YouTube"))
+                }
+            }
         }
     }
 
@@ -446,13 +465,27 @@ struct PlaylistView: View {
     /// YouTube's order is asked of YouTube.
     private func loadAddedAt() async {
         guard sort == .recentlyAdded, !isLiked, page != nil else { return }
-        if isLocal {
-            let entries = (try? await app.core.playlistEntries(id: id)) ?? []
-            addedAt = Dictionary(entries.map { ($0.song.videoId, $0.addedAt) }, uniquingKeysWith: max)
-        } else if let p = try? await app.core.getPlaylist(id: id, sort: PlaylistViewSort.recentlyAdded.server, desc: false) {
-            let n = Int64(p.items.count)
-            addedAt = Dictionary(p.items.enumerated().map { ($1.videoId, n - Int64($0)) }, uniquingKeysWith: max)
+        do {
+            if isLocal {
+                let entries = try await app.core.playlistEntries(id: id)
+                addedAt = Dictionary(entries.map { ($0.song.videoId, $0.addedAt) }, uniquingKeysWith: max)
+            } else {
+                let p = try await app.core.getPlaylist(id: id, sort: PlaylistViewSort.recentlyAdded.server, desc: false)
+                let n = Int64(p.items.count)
+                addedAt = Dictionary(p.items.enumerated().map { ($1.videoId, n - Int64($0)) }, uniquingKeysWith: max)
+            }
+        } catch {
+            guard !FriendlyError.isCancellation(error) else { return }
+            // Without the dates the list can't be in that order: back to the one it was in, and say why.
+            setSort(.custom)
+            app.fail(friendlyError(error, "Couldn't sort by date added"))
         }
+    }
+
+    /// A background reload (like, edit, touched elsewhere) never throws away a page already on
+    /// screen: a failed fetch keeps it (offline it falls back to the downloaded copy).
+    private func reload() async {
+        if let p = await app.loadPlaylist(id) { page = p }
     }
 
     // MARK: recommended
@@ -528,7 +561,7 @@ struct PlaylistView: View {
                     Haptics.impact(.light)
                     app.showToast(on ? "Added to Your Library" : "Removed from Your Library")
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Library" : "Save to Your Library")
             }
@@ -590,6 +623,7 @@ struct AlbumView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.offset) { i, s in
                     TrackRow(song: s, showArt: false, context: context) { app.player.play(items, at: i, context: context) }
+                        .arriveRow(i)
                 }
                 if page == nil { EntityLoadState(failed: failed) { failed = false; attempt += 1 } }
                 // Footer: "N songs, 1 hr 2 min" (14 subdued), as under Spotify's album track list.
@@ -617,7 +651,7 @@ struct AlbumView: View {
                 Haptics.impact(.light)
                 app.showToast(on ? "Added to Your Library" : "Removed from Your Library")
             } label: {
-                Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
+                IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 24).foregroundStyle(saved ? Palette.accent : Palette.subdued)
             }
             .accessibilityLabel(saved ? "Remove from Your Library" : "Save to Your Library")
             DownloadButton(item: BrowseItem(kind: .album, id: id, title: page?.title ?? "", subtitle: page?.artist, thumbnail: page?.thumbnail))
@@ -670,13 +704,16 @@ struct ArtistView: View {
                 if !top.isEmpty { Text("Popular").font(Typo.font(22, .bold)).padding(.horizontal, Space.gutter).padding(.top, Space.l).padding(.bottom, Space.s) }
                 ForEach(Array(top.prefix(showAllPopular ? 10 : 5).enumerated()), id: \.offset) { i, s in
                     TrackRow(song: s, index: i + 1, showPlays: true, context: context) { app.player.play(top, at: i, context: context) }
+                        .arriveRow(i)
                 }
                 if top.count > 5 {
                     // A plain text button under the five rows (Spotify), not a pill.
-                    Button(showAllPopular ? "Show less" : "See more") { withAnimation { showAllPopular.toggle() } }
-                        .font(Typo.font(14, .bold)).foregroundStyle(Palette.subdued)
-                        .frame(height: 44)
-                        .padding(.horizontal, Space.gutter)
+                    // Spotify: an outlined "Show more" pill centred under the rows.
+                    Button(showAllPopular ? "Show less" : "Show more") { withAnimation { showAllPopular.toggle() } }
+                        .font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
+                        .padding(.horizontal, 16).frame(height: 32)
+                        .overlay(Capsule().stroke(Palette.muted, lineWidth: 1))
+                        .frame(maxWidth: .infinity).frame(height: 44)
                 }
                 // Spotify's order: Popular, Discography, then the rest (Featuring, Fans also like…).
                 if !disco.filters.isEmpty {
@@ -791,9 +828,10 @@ struct ArtistView: View {
 
     private func play() {
         if playingThis { app.player.togglePause() } else if let items = page?.topSongs, !items.isEmpty { app.player.play(items, at: 0, context: context) }
+        else if page != nil { app.showToast("No songs to play yet") }
     }
     private func shufflePlay() {
-        guard let items = page?.topSongs, !items.isEmpty else { return }
+        guard let items = page?.topSongs, !items.isEmpty else { if page != nil { app.showToast("No songs to play yet") }; return }
         app.player.play(items, at: Int.random(in: 0..<items.count), context: context, shuffle: true)
     }
 }

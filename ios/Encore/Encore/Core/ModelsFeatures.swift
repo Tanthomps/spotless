@@ -319,9 +319,12 @@ struct DownloadCollectionStatus: Codable, Hashable, Identifiable {
     var failed: Int
     var bytes: Double
     var addedAt: Double
+    /// A song in it couldn't be saved: the phone is out of space (core `storage_full`).
+    var storageFull: Bool?
 }
 
-struct DownloadProgress: Codable, Hashable { var videoId: String; var done: Double; var total: Double }
+/// `collections`: the downloads this song belongs to (older cores leave it out: then it counts for all).
+struct DownloadProgress: Codable, Hashable { var videoId: String; var done: Double; var total: Double; var collections: [String]? }
 
 struct DownloadNetwork: Codable, Hashable {
     var online: Bool

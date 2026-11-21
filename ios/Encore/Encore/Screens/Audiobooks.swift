@@ -128,7 +128,7 @@ struct BookChapterRow: View {
                     .font(Typo.font(13)).foregroundStyle(Palette.subdued).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Icon(name: current && !app.player.paused ? "pause-circle" : "play-circle", fill: true, size: 30)
+                IconSwap(name: current && !app.player.paused ? "pause-circle" : "play-circle", fill: true, size: 30)
                     .foregroundStyle(Palette.text)
             }
             .padding(.horizontal, Space.gutter).padding(.vertical, Space.s + 2)
@@ -156,7 +156,9 @@ struct AudiobookView: View {
             header(off, playing: playingThis && !app.player.paused)
         } content: {
             LazyVStack(alignment: .leading, spacing: 0) {
-                if let page {
+                if let page, page.chapters.isEmpty {
+                    EntityEmptyState(title: "No chapters available", line: "This audiobook has nothing to play yet.")
+                } else if let page {
                     Text("Chapters").font(Typo.font(18, .bold)).padding(.horizontal, Space.gutter).padding(.top, Space.l).padding(.bottom, Space.xs)
                     ForEach(Array(page.chapters.enumerated()), id: \.element.id) { i, c in
                         BookChapterRow(chapter: c, number: i + 1) { playBook(app, page, at: i) }
@@ -213,18 +215,36 @@ struct AudiobookView: View {
                     Haptics.impact(.light)
                     app.showToast(on ? "Added to Your Library" : "Removed from Your Library")
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 28).foregroundStyle(saved ? Palette.accent : Palette.subdued)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 28).foregroundStyle(saved ? Palette.accent : Palette.subdued)
                 }
                 .disabled(book == nil)
                 .accessibilityLabel(saved ? "Remove from Your Library" : "Add to Your Library")
                 .accessibilityIdentifier("book-save")
-                Button { if let page { toggleBookDownload(app, page) } } label: {
-                    Icon(name: "arrow-circle-down", fill: downloaded, size: 28).foregroundStyle(downloaded ? Palette.accent : Palette.subdued)
+                // Same toggle as albums: progress ring while it downloads, paused look, Retry on failures.
+                let dl = book.map { app.downloads.state("abook:\($0.id)") } ?? .none
+                let full = book.map { app.downloads.storageFull("abook:\($0.id)") } ?? false
+                let paused: String? = full ? "Not enough storage" : { if case .downloading = dl { app.downloads.pausedReason } else { nil } }()
+                Button {
+                    guard let page else { return }
+                    if full { return storageFullToast(app) }
+                    if case .failed = dl { retryDownloads(app) } else { toggleBookDownload(app, page) }
+                } label: {
+                    DownloadGlyph(state: downloaded && dl == .none ? .downloading(0) : dl, size: 28, paused: paused != nil)
                 }
+                .buttonStyle(PressScale(scale: 0.9))
                 .disabled(page == nil)
-                .accessibilityLabel(downloaded ? "Remove download" : "Download")
+                .accessibilityLabel(paused.map { "Download paused. \($0)" } ?? {
+                    switch dl {
+                    case .none: "Download"
+                    case .downloading: "Downloading"
+                    case .done: "Remove download"
+                    case .failed(let n): n == 1 ? "1 chapter didn't download. Retry" : "\(n) chapters didn't download. Retry"
+                    }
+                }())
                 Spacer()
                 PlayCircleButton(playing: playing, action: play).modifier(PlayAnchor())
+                    .disabled(page?.chapters.isEmpty == true)
+                    .opacity(page?.chapters.isEmpty == true ? 0.4 : 1)
                     .accessibilityLabel(playing ? "Pause" : resuming ? "Resume" : "Play")
                     .accessibilityIdentifier("entity-play")
             }
@@ -244,14 +264,14 @@ struct AudiobookView: View {
             if let d = book?.description, !d.isEmpty {
                 VStack(alignment: .leading, spacing: Space.s) {
                     Text("About this audiobook").font(Typo.font(18, .bold))
-                    Text(d).font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(aboutExpanded ? nil : 4)
+                    Text(d).font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(aboutExpanded ? nil : 4).clipped()
                     Button(aboutExpanded ? "Show less" : "Show more") { withAnimation(Motion.quick) { aboutExpanded.toggle() } }
                         .font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Space.s) {
                             ForEach((book?.genres ?? []) + [book?.language ?? "", "Public domain • LibriVox"].filter { !$0.isEmpty }, id: \.self) { g in
                                 Text(g).font(Typo.font(13)).padding(.horizontal, 12).frame(height: 30)
-                                    .background(Capsule().fill(Color(hex: "#2a2a2a")))
+                                    .glassCapsule()
                             }
                         }
                     }

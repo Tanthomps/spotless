@@ -296,7 +296,13 @@ fn filter_sql(spec: &Spec, row: &str) -> String {
     match spec.filter {
         Some("settings") => {
             let list: Vec<String> = SYNCED_SETTINGS.iter().map(|k| quote(k)).collect();
-            format!(" AND {row}.key IN ({})", list.join(", "))
+            // Plus each device's now-playing and the remote controls aimed at it (presence.rs).
+            format!(
+                " AND ({row}.key IN ({}) OR {row}.key LIKE '{}%' OR {row}.key LIKE '{}%')",
+                list.join(", "),
+                crate::presence::PRESENCE,
+                crate::presence::REMOTE
+            )
         }
         _ => String::new(),
     }

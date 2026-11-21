@@ -4,6 +4,14 @@
 import SwiftUI
 
 struct NowPlayingCover: View {
+    /// Under a parent that ignores the safe area the reader reports 0 on a real phone, which put the
+    /// header under the Dynamic Island: take the window's own insets when they are larger.
+    static func safeInsets(_ e: EdgeInsets) -> EdgeInsets {
+        let w = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets ?? .zero
+        return EdgeInsets(top: max(e.top, w.top), leading: max(e.leading, w.left), bottom: max(e.bottom, w.bottom), trailing: max(e.trailing, w.right))
+    }
+    static let openAnimation = Animation.spring(response: 0.42, dampingFraction: 0.9)
+    static let closeAnimation = Animation.spring(response: 0.34, dampingFraction: 0.9)
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drag: CGFloat = 0
@@ -18,8 +26,9 @@ struct NowPlayingCover: View {
             let fullscreen = open && VideoStore.shared.fullscreen
             ZStack {
                 if app.player.hasTrack {
-                    NowPlayingView(drag: $drag, screenHeight: h, insets: geo.safeAreaInsets)
+                    NowPlayingView(drag: $drag, screenHeight: h, insets: Self.safeInsets(geo.safeAreaInsets))
                         .opacity(fullscreen ? 0 : 1)
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { ArtFlight.shared.npSheetY = $0 }
                 }
                 if fullscreen { VideoFullscreen() }
             }
@@ -28,9 +37,11 @@ struct NowPlayingCover: View {
             // Reduce Motion: Now Playing fades in place instead of sliding up.
             .offset(y: open ? max(0, drag) : (reduceMotion ? 0 : h))
             .opacity(reduceMotion && !open ? 0 : 1)
-            .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.42, dampingFraction: 0.9), value: open)
+            // Closing is quicker than opening (0.8x).
+            .animation(reduceMotion ? .easeInOut(duration: 0.2) : open ? Self.openAnimation : Self.closeAnimation, value: open)
             .ignoresSafeArea()
         }
+        .onChange(of: drag) { _, d in ArtFlight.shared.drag = d }
         .allowsHitTesting(app.router.nowPlayingOpen)
         .accessibilityHidden(!app.router.nowPlayingOpen)
         .onAppear { VideoStore.shared.attach(app) }
@@ -55,9 +66,13 @@ struct NowPlayingView: View {
     /// Small dark pill over the controls ("Smart Shuffle is on").
     @State private var pill: String?
     @State private var pillTask: Task<Void, Never>?
+    @State private var savingEpisode = false
+    /// Spotify: a screenshot on Now Playing raises the song's share card.
+    @State private var shareCard: SongItem?
 
     private var player: PlayerStore { app.player }
-    private var bg: Color { accent?.surface(value: 0.5, maxSaturation: 0.7) ?? Color(hex: "#404040") }
+    /// Spotify mutes the cover's colour hard (a bright teal cover gives a dark teal page).
+    private var bg: Color { accent?.surface(value: 0.36, maxSaturation: 0.5) ?? Color(hex: "#3a3a3a") }
 
     var body: some View {
         GeometryReader { geo in
@@ -95,6 +110,16 @@ struct NowPlayingView: View {
         .background(Color(hex: "#121212").ignoresSafeArea())
         .clipShape(RoundedRectangle(cornerRadius: drag > 0 ? 40 : 0, style: .continuous))
         .artAccent(player.current?.thumbnail ?? player.now?.thumbnail, into: $accent)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+            if let s = player.current, s.isEpisode != true, shareCard == nil { shareCard = s }
+        }
+        .sheet(item: $shareCard) { s in
+            ShareCardSheet(song: s, accent: accent).environment(app)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground { SheetGlass() }
+                .presentationCornerRadius(Radius.glassSheet)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("now-playing")
         .overlay {
@@ -144,37 +169,56 @@ struct NowPlayingView: View {
 
     // MARK: first page
 
+    /// Spotify's first page, measured on an iPhone 15 Pro Max (430 × 932 pt): header centre 24 under
+    /// the status bar, cover 24 pt from each side, video pill 52 under it, title, scrubber, controls
+    /// and the device/share/queue row at fixed gaps, the lyrics card peeking right after. On a shorter
+    /// phone the gaps (not the cover) shrink in proportion.
     private func mainPage(safeTop: CGFloat, height: CGFloat) -> some View {
         let song = player.current
+        let art = UIScreen.main.bounds.width - Space.xl * 2
+        // header 48 · pill 32 · title 51 · scrubber 37 · controls 64 · bottom row 44
+        let fixed: CGFloat = 276
+        let gaps: CGFloat = 149.5
+        let room = height - safeTop - 32 - fixed - art
+        let k = min(1.4, max(0.4, room / gaps))
         return VStack(spacing: 0) {
-            header
-            Spacer(minLength: Space.l)
+            header.frame(height: 48)
+            Color.clear.frame(height: 51.4 * k)
             // A music video / video podcast replaces the cover; the pill switches between them (stream
             // ios-video). Either one swipes to the neighbour; a tap on the video shows its controls.
             NPArtwork(fallback: song?.thumbnail ?? player.now?.thumbnail, video: VideoStore.shared.showsVideo)
-            if VideoStore.shared.canSwitch {
-                NPVideoSwitch().padding(.top, Space.l)
+                .frame(width: art, height: art)
+            Color.clear.frame(height: 52.6 * k)
+            // The pill's slot is kept when there is no video, so the title never jumps between songs.
+            Group {
+                if VideoStore.shared.canSwitch { NPVideoSwitch() } else { Color.clear }
             }
-            Spacer(minLength: Space.xl)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 32)
+            Color.clear.frame(height: 9.5 * k)
             titleRow(song)
-            Scrubber().padding(.top, 2)
-            controls.padding(.top, Space.s)
+            Color.clear.frame(height: 11 * k)
+            Scrubber()
+            Color.clear.frame(height: 17.7 * k)
+            controls
+                .padding(.horizontal, -6)
                 .overlay(alignment: .top) {
                     if let pill {
                         Text(pill).font(Typo.font(13, .semibold)).foregroundStyle(Palette.text)
                             .padding(.horizontal, 12).frame(height: 30)
-                            .background(Capsule().fill(Color(hex: "#2a2a2a")))
+                            .glassCapsule()
                             .offset(y: -40)
-                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                            .transition(Motion.pop)
                             .accessibilityIdentifier("np-pill")
                     }
                 }
-            bottomRow.padding(.top, Space.xs)
-            Spacer(minLength: Space.l)
+            Color.clear.frame(height: 7.3 * k)
+            bottomRow
         }
         .padding(.horizontal, Space.xl)
         .padding(.top, safeTop)
-        .frame(height: height)
+        // The lyrics card starts 5 pt under the bottom row (the cards' own 16 pt spacing taken back).
+        .padding(.bottom, 5 - Space.l)
     }
 
     private var header: some View {
@@ -185,12 +229,11 @@ struct NowPlayingView: View {
             .accessibilityLabel("Close Now Playing")
             .accessibilityIdentifier("np-close")
             Spacer()
-            // Context kicker 11/400 +1 tracking white 70 %, context name 13/700; tap opens the context page.
+            // Spotify: just the context's name, 15/700, centred; tap opens the context page.
             Button { openContext() } label: {
                 VStack(spacing: 1) {
-                    Text(contextLabel).font(Typo.font(11)).tracking(1).foregroundStyle(Palette.text.opacity(0.7))
-                        .lineLimit(1)
-                    Text(player.queue.sourceName ?? player.now?.album ?? "").font(Typo.font(13, .bold)).foregroundStyle(Palette.text)
+                    let name = player.queue.sourceName ?? player.now?.album ?? ""
+                    Text(name.isEmpty ? contextLabel.capitalized : name).font(Typo.font(15, .bold)).foregroundStyle(Palette.text)
                         .lineLimit(1)
                 }
                 .contentShape(Rectangle())
@@ -275,24 +318,31 @@ struct NowPlayingView: View {
                 // Episodes: + saves to Your Episodes (not Liked Songs).
                 let saved = app.podcasts.saved.contains { $0.id == s.videoId }
                 Button {
+                    guard !savingEpisode else { return }
+                    savingEpisode = true
                     Task {
-                        guard let e = try? await app.core.podcastEpisode(id: s.videoId) else { return }
+                        defer { savingEpisode = false }
+                        let e: PodcastEpisode
+                        do { e = try await app.core.podcastEpisode(id: s.videoId) } catch {
+                            app.fail(friendlyError(error, saved ? "Couldn't remove this episode" : "Couldn't save this episode"))
+                            return
+                        }
                         let on = app.podcasts.toggleSaved(e)
                         Haptics.impact(.light)
                         app.showToast(on ? "Added to Your Episodes" : "Removed from Your Episodes")
                     }
                 } label: {
-                    Icon(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 28)
-                        .foregroundStyle(saved ? Palette.accent : Palette.text)
+                    IconSwap(name: saved ? "check-circle" : "plus-circle", fill: saved, size: 38)
+                        .foregroundStyle(saved ? Palette.accent : Palette.text).pulse(on: saved)
                 }
                 .accessibilityLabel(saved ? "Remove from Your Episodes" : "Add to Your Episodes")
                 .accessibilityIdentifier("np-like")
             } else if let s = song {
                 let liked = app.library.isLiked(s.videoId)
                 Button { app.likeButton(s) } label: {
-                    Icon(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 28)
+                    IconSwap(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 38)
                         .foregroundStyle(liked ? Palette.accent : Palette.text)
-                        .symbolEffect(.bounce, value: liked)
+                        .pulse(on: liked)
                 }
                 .accessibilityLabel(liked ? "Saved in Liked Songs" : "Add to Liked Songs")
                     .accessibilityHint(liked ? "Opens Add to playlist" : "")
@@ -345,14 +395,14 @@ struct NowPlayingView: View {
             .accessibilityLabel("Playback speed \(speedLabel(app.settings.speed))")
             .accessibilityIdentifier("np-speed")
             Spacer()
-            Button { Task { try? await app.core.seekRelative(-15) } } label: { SkipSeconds(forward: false) }
+            Button { app.player.seekBy(-15) } label: { SkipSeconds(forward: false) }
                 .accessibilityLabel("Back 15 seconds")
                 .accessibilityIdentifier("np-back15")
             Spacer()
             PlayCircleButton(playing: !player.paused, size: Metrics.npPlayButton, color: .white, loading: player.loading) { player.togglePause() }
                 .accessibilityIdentifier("np-play")
             Spacer()
-            Button { Task { try? await app.core.seekRelative(15) } } label: { SkipSeconds(forward: true) }
+            Button { app.player.seekBy(15) } label: { SkipSeconds(forward: true) }
                 .accessibilityLabel("Forward 15 seconds")
                 .accessibilityIdentifier("np-fwd15")
             Spacer()
@@ -367,7 +417,7 @@ struct NowPlayingView: View {
     private var musicControls: some View {
         HStack {
             Button { cycleShuffle() } label: {
-                ToggleIcon(name: "shuffle", on: player.shuffle || smartOn, size: 24)
+                ToggleIcon(name: "shuffle", on: player.shuffle || smartOn, size: 28)
                     .overlay(alignment: .topTrailing) {
                         if smartOn {
                             Icon(name: "sparkle", fill: true, size: 11).foregroundStyle(Palette.accent).offset(x: -6, y: 8)
@@ -378,7 +428,7 @@ struct NowPlayingView: View {
             .accessibilityIdentifier("np-shuffle")
             Spacer()
             Button { player.skipPrevious() } label: {
-                Icon(name: "skip-back", fill: true, size: 36).foregroundStyle(Palette.text).frame(width: 52, height: 52)
+                SkipGlyph(forward: false).foregroundStyle(Palette.text).frame(width: 52, height: 52)
             }
             .accessibilityLabel("Previous")
             Spacer()
@@ -386,13 +436,13 @@ struct NowPlayingView: View {
                 .accessibilityIdentifier("np-play")
             Spacer()
             Button { player.skipNext() } label: {
-                Icon(name: "skip-forward", fill: true, size: 36).foregroundStyle(Palette.text).frame(width: 52, height: 52)
+                SkipGlyph(forward: true).foregroundStyle(Palette.text).frame(width: 52, height: 52)
             }
             .accessibilityLabel("Next")
             .accessibilityIdentifier("np-next")
             Spacer()
             Button { player.cycleRepeat() } label: {
-                ToggleIcon(name: player.repeatMode == .one ? "repeat-once" : "repeat", on: player.repeatMode != .off, size: 24)
+                ToggleIcon(name: player.repeatMode == .one ? "repeat-once" : "repeat", on: player.repeatMode != .off, size: 28)
             }
             .accessibilityLabel("Repeat")
         }
@@ -405,8 +455,8 @@ struct NowPlayingView: View {
             // Accent glyph plus the device's name in accent while the audio plays elsewhere (Spotify).
             let device = AudioRoute.shared.externalName
             HStack(spacing: 6) {
-                Icon(name: "devices", size: 20).foregroundStyle(device == nil ? Palette.text.opacity(0.85) : Palette.accent)
-                    .frame(width: 20, height: 44)
+                Icon(name: "devices", size: 22).foregroundStyle(device == nil ? Palette.text.opacity(0.85) : Palette.accent)
+                    .frame(width: 22, height: 44)
                 if let device {
                     Text(device).font(Typo.font(12, .bold)).foregroundStyle(Palette.accentText).lineLimit(1)
                         .accessibilityIdentifier("np-device")
@@ -416,13 +466,15 @@ struct NowPlayingView: View {
             .routePickerOverlay()
             Spacer(minLength: Space.m)
             Button { if let s = app.player.current { ShareSheet.present(.song(s), app: app) } } label: {
-                Icon(name: "export", size: 20).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 44, height: 44)
+                Icon(name: "export", size: 24).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 44, height: 44)
             }
                 .accessibilityLabel("Share")
                 .accessibilityIdentifier("np-share")
-                .padding(.trailing, Space.s)
+                .padding(.trailing, 3.5)
+            // Spotify: queue flush with the cover's right edge, share 47 pt to its left (centre to centre).
             Button { app.router.queueOpen = true } label: {
-                Icon(name: "queue", size: 20).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 44, height: 44, alignment: .trailing)
+                Icon(name: "queue", size: 22).foregroundStyle(Palette.text.opacity(0.85)).frame(width: 32, height: 44, alignment: .trailing)
+                    .contentShape(Rectangle().inset(by: -6))
             }
                 .accessibilityLabel("Queue")
                 .accessibilityIdentifier("np-queue")
@@ -452,7 +504,7 @@ struct ToggleIcon: View {
     var size: CGFloat = 24
     var body: some View {
         VStack(spacing: 3) {
-            Icon(name: name, size: size).foregroundStyle(on ? Palette.accent : Palette.text)
+            IconSwap(name: name, size: size).foregroundStyle(on ? Palette.accent : Palette.text)
             Circle().fill(on ? Palette.accent : .clear).frame(width: 4, height: 4)
         }
         .frame(width: 44, height: 52)
@@ -531,7 +583,9 @@ struct NPArtwork: View {
                 GeometryReader { geo in
                     strip(width: geo.size.width)
                 }
+                .opacity(ArtFlight.shared.flying && !video ? 0 : 1)
             }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ArtFlight.shared.npArt = $0 }
             .contentShape(Rectangle())
             .onTapGesture { if video { withAnimation(.easeOut(duration: 0.2)) { chrome.toggle() } } }
             .gesture(swipe)
@@ -775,7 +829,7 @@ struct Scrubber: View {
                             .accessibilityIdentifier("np-scrubber-chapter")
                         Spacer()
                     }
-                    Text("-" + timecode(max(0, p.duration - value * p.duration)))
+                    Text(timecode(p.duration))
                 }
                 .font(Typo.time).monospacedDigit().foregroundStyle(Palette.text.opacity(0.7))
                 .padding(.top, -8)
@@ -864,6 +918,8 @@ struct NextInQueueCard: View {
 struct AboutArtistCard: View {
     @Environment(AppModel.self) private var app
     let artist: ArtistPage
+    /// The label flips on the tap; the library catches up (or a failure toast puts it back).
+    @State private var pending: Bool?
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
@@ -879,11 +935,17 @@ struct AboutArtistCard: View {
                         if let m = artist.monthlyListeners { Text(m.replacingOccurrences(of: "audience", with: "listeners")).font(Typo.meta).foregroundStyle(Palette.subdued) }
                     }
                     Spacer()
-                    let following = app.library.isSaved(artist.channelId)
+                    let saved = app.library.isSaved(artist.channelId)
+                    let following = pending ?? saved
                     Button(following ? "Following" : "Follow") {
-                        app.library.toggleSaved(BrowseItem(kind: .artist, id: artist.channelId, title: artist.name ?? "", subtitle: "Artist", thumbnail: artist.thumbnail))
+                        guard pending == nil else { return }
+                        pending = !saved
+                        let on = app.library.toggleSaved(BrowseItem(kind: .artist, id: artist.channelId, title: artist.name ?? "", subtitle: "Artist", thumbnail: artist.thumbnail))
                         Haptics.impact(.light)
+                        app.showToast(on ? "Following \(artist.name ?? "artist")" : "Unfollowed \(artist.name ?? "artist")")
+                        Task { try? await Task.sleep(nanoseconds: 4_000_000_000); pending = nil }
                     }
+                    .onChange(of: saved) { _, _ in pending = nil }
                     .font(Typo.font(14, .bold)).foregroundStyle(Palette.text)
                     .padding(.horizontal, 16).frame(height: 32)
                     .overlay(Capsule().stroke(following ? Palette.text : Palette.muted, lineWidth: 1))
@@ -903,5 +965,58 @@ struct AboutArtistCard: View {
             app.router.push(.artist(artist.channelId))
         }
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The cover as ONE element between the mini player and Now Playing: on open it travels from the
+/// mini cover to the big one (and back on close) above both, while the two real covers hide. Frames
+/// are measured in global space; Now Playing's is kept at rest (its slide offset taken out).
+@MainActor @Observable final class ArtFlight {
+    static let shared = ArtFlight()
+    struct Leg { var from: CGRect; var to: CGRect; var fromRadius: CGFloat; var toRadius: CGFloat; var url: String? }
+    private(set) var leg: Leg?
+    private(set) var arrived = false
+    @ObservationIgnored var mini: CGRect = .zero
+    @ObservationIgnored var npArt: CGRect = .zero
+    @ObservationIgnored var npSheetY: CGFloat = 0
+    @ObservationIgnored var drag: CGFloat = 0
+    @ObservationIgnored private var generation = 0
+    var flying: Bool { leg != nil }
+    private var npRest: CGRect { npArt.offsetBy(dx: 0, dy: -npSheetY) }
+
+    func start(open: Bool, url: String?) {
+        generation += 1
+        let g = generation
+        guard !Motion.reduce, mini.width > 0, npArt.width > 0, url != nil,
+              !VideoStore.shared.showsVideo, !VideoStore.shared.miniShowsVideo else { leg = nil; return }
+        let np = npRest.offsetBy(dx: 0, dy: max(0, drag))
+        leg = open ? Leg(from: mini, to: npRest, fromRadius: Radius.s, toRadius: Radius.l, url: url)
+                   : Leg(from: np, to: mini, fromRadius: Radius.l, toRadius: Radius.s, url: url)
+        arrived = false
+        withAnimation(open ? NowPlayingCover.openAnimation : NowPlayingCover.closeAnimation) {
+            arrived = true
+        } completion: { [weak self] in
+            guard let self, self.generation == g else { return }
+            self.leg = nil
+        }
+    }
+}
+
+struct ArtFlightView: View {
+    private var flight: ArtFlight { ArtFlight.shared }
+    var body: some View {
+        GeometryReader { g in
+            if let leg = flight.leg {
+                let o = g.frame(in: .global).origin
+                let r = flight.arrived ? leg.to : leg.from
+                ArtImage(url: leg.url, px: 1080, radius: flight.arrived ? leg.toRadius : leg.fromRadius)
+                    .frame(width: r.width, height: r.height)
+                    .shadow(color: .black.opacity(flight.arrived ? 0.35 : 0), radius: 24, y: 10)
+                    .position(x: r.midX - o.x, y: r.midY - o.y)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

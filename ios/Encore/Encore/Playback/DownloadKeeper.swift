@@ -120,7 +120,7 @@ final class DownloadKeeper {
                 let done = cols.reduce(0) { $0 + $1.done }
                 task.progress.totalUnitCount = Int64(max(total, 1))
                 task.progress.completedUnitCount = Int64(min(done, total))
-                task.updateTitle("Downloading", subtitle: "\(done) of \(total) songs")
+                task.updateTitle("Downloading", subtitle: "\(done.formatted()) of \(counted(total, "song"))")
                 if pending == 0 { break }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }

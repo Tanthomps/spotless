@@ -11,7 +11,8 @@ struct CardShelf: View {
             LazyHStack(alignment: .top, spacing: Space.l) {
                 ForEach(items, id: \.self) { item in
                     Button { tap(item) } label: {
-                        MediaCard(title: item.title, subtitle: item.subtitle, thumbnail: item.thumbnail, circle: item.kind == .artist, liked: item.id == likedPlaylistId)
+                        MediaCard(title: item.title, subtitle: item.subtitle, thumbnail: item.thumbnail, circle: item.kind == .artist, liked: item.id == likedPlaylistId,
+                                  fallback: ArtRef(id: item.id, title: item.title))
                     }
                     .buttonStyle(PressScale())
                     .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in
@@ -65,11 +66,11 @@ struct LibItem: Identifiable, Hashable {
         let me = app.localUser
         // Recents: the core's play record, an own playlist's last edit (adding songs, renaming) and
         // local touches (a like moves Liked Songs; starting a context moves it before the core says so).
-        var out: [LibItem] = [LibItem(id: likedPlaylistId, kind: .playlist, title: "Liked Songs", subtitle: "Playlist • \(lib.likedIds.count) songs",
+        var out: [LibItem] = [LibItem(id: likedPlaylistId, kind: .playlist, title: "Liked Songs", subtitle: "Playlist • \(counted(lib.likedIds.count, "song"))",
                                       thumbnail: nil, pinned: pins.contains(likedPlaylistId), added: .greatestFiniteMagnitude,
                                       played: lib.recentsKey(likedPlaylistId), creator: me, byYou: true)]
         for f in s.folders ?? [] {
-            out.append(LibItem(id: f.id, kind: .playlist, title: f.name, subtitle: "Folder • \(f.items.count) playlist\(f.items.count == 1 ? "" : "s")",
+            out.append(LibItem(id: f.id, kind: .playlist, title: f.name, subtitle: "Folder • \(counted(f.items.count, "playlist"))",
                                pinned: pins.contains(f.id), added: f.createdAt, played: lib.recentsKey(f.id, base: f.updatedAt), creator: me, row: .folder, byYou: true))
         }
         out += s.playlists.enumerated().map { i, p in
@@ -200,8 +201,18 @@ struct LibraryView: View {
                 ScrollView {
                     GeometryReader { g in Color.clear.preference(key: LibScrollKey.self, value: g.frame(in: .named("lib")).minY) }.frame(height: 0)
                     sortRow.id("top")
-                    if app.libraryGrid { gridView(list) } else { listView(list) }
-                    if list.isEmpty { emptyState }
+                    if !app.library.loaded {
+                        if app.library.failed {
+                            EntityLoadState(failed: true) { app.library.failed = false; Task { await app.library.refresh() } }
+                        } else {
+                            SkeletonRows(count: 8)
+                        }
+                    } else {
+                        if libraryEmpty { emptyState }
+                        if app.libraryFilter == "Downloaded" { DownloadsRetryRow() }
+                        if app.libraryGrid { gridView(list) } else { listView(list) }
+                        if list.isEmpty && !libraryEmpty { emptyState }
+                    }
                 }
                 .coordinateSpace(name: "lib")
                 .onPreferenceChange(LibScrollKey.self) { y in scrolled = y < -2 }
@@ -310,13 +321,20 @@ struct LibraryView: View {
             .accessibilityIdentifier("library-sort")
             Spacer()
             Button { Haptics.selection(); withAnimation(Motion.quick) { app.libraryGrid.toggle() } } label: {
-                Icon(name: app.libraryGrid ? "list-bullets" : "squares-four", size: 20)
+                IconSwap(name: app.libraryGrid ? "list-bullets" : "squares-four", size: 20)
             }
             .accessibilityLabel(app.libraryGrid ? "Show as list" : "Show as grid")
         }
         .foregroundStyle(Palette.text)
         .padding(.horizontal, Space.gutter)
         .padding(.vertical, Space.s)
+    }
+
+    /// Nothing saved at all (Liked Songs and Your Episodes are always listed, so `items` is never empty).
+    private var libraryEmpty: Bool {
+        let s = app.library.snapshot
+        return app.libraryFilter == nil && (app.librarySearch ?? "").isEmpty && s.playlists.isEmpty && s.saved.isEmpty
+            && app.library.likedIds.isEmpty && app.podcasts.follows.isEmpty
     }
 
     /// A centred 16/700 line and a 14 subdued line; with nothing in the library at all, the white
@@ -351,7 +369,7 @@ struct LibraryView: View {
 
     private func listView(_ list: [LibItem]) -> some View {
         LazyVStack(spacing: 0) {
-            ForEach(list) { it in LibraryRow(item: it) }
+            ForEach(Array(list.enumerated()), id: \.element.id) { i, it in LibraryRow(item: it).arriveRow(i) }
         }
     }
 
@@ -432,7 +450,8 @@ struct LibraryArt: View {
                 if item.id == likedPlaylistId {
                     GeometryReader { g in LikedCover(size: g.size.width) }
                 } else {
-                    ArtImage(url: item.thumbnail, px: 200, radius: item.kind == .podcast ? Radius.m : Radius.xs, circle: item.kind == .artist)
+                    ArtImage(url: item.thumbnail, px: 200, radius: item.kind == .podcast ? Radius.m : Radius.xs, circle: item.kind == .artist,
+                             fallback: ArtRef(id: item.id, title: item.title))
                 }
             }
         }
@@ -539,7 +558,6 @@ struct LibraryRow: View {
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @State private var chip = "All"
-    @State private var tint: UIColor?
 
     static let chips = ["All", "Music", "Podcasts", "Audiobooks"] // Audiobooks: stream audiobooks
 
@@ -555,6 +573,12 @@ struct HomeView: View {
     private enum Phase { case loading, failed, empty, shelves }
     /// `mixes`: the stored Made for you shelf counts as something to show.
     private func phase(_ shelves: [Shelf], mixes: Bool) -> Phase {
+        if chip == "Podcasts" || chip == "Audiobooks" {
+            let pods = chip == "Podcasts"
+            if shelves.isEmpty && (pods ? app.home.podcastsFailed : app.home.audiobooksFailed) { return .failed }
+            if shelves.isEmpty && !(pods ? app.home.podcastsLoaded : app.home.audiobooksLoaded) { return .loading }
+            return shelves.isEmpty ? .empty : .shelves
+        }
         guard chip == "All" || chip == "Music" else { return .shelves }
         if shelves.isEmpty && app.home.failed { return .failed }
         if shelves.isEmpty && !app.home.loaded { return .loading }
@@ -603,6 +627,7 @@ struct HomeView: View {
                         }
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("home-shelf")
+                        .arriveBlock(idx + 1)
                         if hasMfy && shelf.id == "recently_played" { MadeForYouShelf() }
                         // The desktop's "Your shows": on All, after the second shelf (Made for you counts).
                         if idx == (hasMfy ? 0 : 1) && chip == "All" && !app.podcasts.follows.isEmpty { yourShows }
@@ -620,20 +645,19 @@ struct HomeView: View {
             }
         }
         .foregroundStyle(Palette.text)
-        .background(alignment: .top) {
-            LinearGradient(colors: [tint?.surface(value: 0.35, maxSaturation: 0.6) ?? Palette.base, Palette.base], startPoint: .top, endPoint: .bottom)
-                .frame(height: 320).ignoresSafeArea()
-                .animation(.easeInOut(duration: 1), value: tint)
-        }
+        // Spotify's Home stays flat #121212 at the top; it never takes a cover's colour.
         .background(Palette.base)
         .chromeInset()
         .toolbar(.hidden, for: .navigationBar)
-        .artAccent(shelves.first?.items.first(where: { $0.thumbnail != nil })?.thumbnail, into: $tint)
         // The desktop's Home: load, reload on `home-changed` (a context switch, YouTube's shelves
         // arriving late, Made for you rebuilt, the network flipping), on coming back to the app,
         // and on pull-to-refresh. Starting a context moves its tile at once (`HomeStore.touch`).
         .task(id: app.homeSerial) { await load() }
-        .refreshable { await load() }
+        .refreshable {
+            await load()
+            // A pull that failed with shelves still showing: say so instead of nothing.
+            if !app.home.shelves.isEmpty && app.home.lastFetchFailed { app.fail("Couldn't refresh Home. Check your connection.") }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             Task { await load() }
         }
@@ -655,9 +679,17 @@ struct HomeView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Space.s) {
+                        // Spotify has no bell: What's New lives in the side menu, flagged by a blue dot on the avatar.
                         Avatar()
+                            .overlay(alignment: .topTrailing) {
+                                if app.settings.whatsNewCount > 0 {
+                                    Circle().fill(Palette.announcement).frame(width: 9, height: 9)
+                                        .overlay(Circle().stroke(Palette.base, lineWidth: 1.5))
+                                        .accessibilityLabel("New in What's New")
+                                }
+                            }
                         ForEach(Self.chips, id: \.self) { c in
-                            Chip(title: c, selected: c == chip) { select(c) }
+                            Chip(title: c, selected: c == chip, compact: true) { select(c) }
                                 .fixedSize()
                                 .id(c)
                                 .accessibilityIdentifier("home-chip-\(c)")
@@ -669,8 +701,6 @@ struct HomeView: View {
                 // The picked chip is always fully in view (a deep link can pick one off-screen).
                 .onChange(of: chip, initial: true) { _, c in withAnimation(Motion.quick) { proxy.scrollTo(c) } }
             }
-            WhatsNewBell()
-                .padding(.trailing, Space.gutter)
         }
     }
 
@@ -728,7 +758,7 @@ struct HomeView: View {
             Text("Something went wrong").font(Typo.font(24, .bold))
             Text("Try reloading the page.").font(Typo.font(16)).foregroundStyle(Palette.subdued)
             Button {
-                app.home.failed = false
+                app.home.failed = false; app.home.podcastsFailed = false; app.home.audiobooksFailed = false
                 Task { await load() }
             } label: {
                 Text("Reload").font(Typo.button).foregroundStyle(.black)
@@ -815,7 +845,7 @@ struct HomeView: View {
                 Button { app.router.open(homeBrowseItem(it)) } label: {
                     HStack(spacing: Space.s) {
                         if it.kind == "liked" { LikedCover(size: Metrics.shortcutHeight).clipShape(Rectangle()) } else {
-                            ArtImage(url: it.thumbnail, px: 160, radius: 0, circle: false)
+                            ArtImage(url: it.thumbnail, px: 160, radius: 0, circle: false, fallback: ArtRef(id: it.id, title: it.title))
                                 .frame(width: Metrics.shortcutHeight, height: Metrics.shortcutHeight)
                         }
                         let ep = episodeTile(it)
@@ -890,26 +920,6 @@ func homeBrowseItem(_ s: ShelfItem) -> BrowseItem {
 }
 
 // MARK: home additions (smart2)
-
-/// What's New: the bell in the Home header, with the blue "New" dot.
-struct WhatsNewBell: View {
-    @Environment(AppModel.self) private var app
-    var body: some View {
-        Button { app.router.push(.whatsNew) } label: {
-            Icon(name: "bell", size: 24).foregroundStyle(Palette.text)
-                .overlay(alignment: .topTrailing) {
-                    if app.settings.whatsNewCount > 0 {
-                        Circle().fill(Palette.announcement).frame(width: 9, height: 9)
-                            .overlay(Circle().stroke(Palette.base, lineWidth: 1.5))
-                            .offset(x: 1, y: -1)
-                    }
-                }
-                .frame(width: 40, height: 40)
-        }
-        .accessibilityLabel(app.settings.whatsNewCount > 0 ? "What's New, new items" : "What's New")
-        .accessibilityIdentifier("whats-new-bell")
-    }
-}
 
 struct MadeForYouShelf: View {
     @Environment(AppModel.self) private var app

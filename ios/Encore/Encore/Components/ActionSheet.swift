@@ -49,12 +49,12 @@ struct ActionSheet: View {
                                         Text(sub).font(Typo.font(14)).foregroundStyle(Palette.subdued).multilineTextAlignment(.leading)
                                     }
                                 } else if let checked = r.checked {
-                                    Text(r.title).font(Typo.sheetItem).foregroundStyle(checked ? Palette.accentText : Palette.text)
+                                    Text(r.title).font(Typo.sheetItem).lineLimit(2).foregroundStyle(checked ? Palette.accentText : Palette.text)
                                     Spacer()
                                     if checked { Icon(name: "check", size: 20).foregroundStyle(Palette.accent) }
                                 } else {
                                     Icon(name: r.icon, fill: r.fill, size: 24).foregroundStyle(r.tint == Palette.text ? Palette.subdued : r.tint)
-                                    Text(r.title).font(Typo.sheetItem).foregroundStyle(Palette.text)
+                                    Text(r.title).font(Typo.sheetItem).lineLimit(2).foregroundStyle(Palette.text)
                                 }
                                 Spacer()
                             }
@@ -126,6 +126,10 @@ struct ActionSheet: View {
                 SheetRow(icon: "queue", title: "Add to queue") { app.queue([s], from: ctx?.title) },
                 SheetRow(icon: "list-plus", title: "Play next") { app.playNext([s], from: ctx?.title) },
             ]
+            // In someone else's Jam, the queue is theirs: songs go to the Jam.
+            if app.jam.role == .guest {
+                r.insert(SheetRow(icon: "users-three", title: "Add to Jam") { app.jam.add([s]) }, at: 2)
+            }
             let music = s.isEpisode != true
             // Episodes (search results, Now Playing): Download, like the episode sheet.
             if !music { r.insert(episodeDownloadRow(app, song: s), at: 2) }
@@ -177,9 +181,12 @@ struct ActionSheet: View {
                             // Hiding what is playing moves on, as Spotify does.
                             if app.player.now?.videoId == s.videoId { app.player.skipNext() }
                             app.showToast("Song hidden", action: "Undo") {
-                                Task { try? await app.core.setHidden(s, hidden: false); await app.library.refresh(); await app.player.refresh() }
+                                Task {
+                                    do { try await app.core.setHidden(s, hidden: false) } catch { app.fail(friendlyError(error, "Couldn't unhide it")) }
+                                    await app.library.refresh(); await app.player.refresh()
+                                }
                             }
-                        } catch { app.showToast("Couldn't hide it") }
+                        } catch { app.fail(friendlyError(error, "Couldn't hide it")) }
                     }
                 })
             }
@@ -219,17 +226,33 @@ struct ActionSheet: View {
             }
             r += [
                 downloadRow(c),
-                SheetRow(icon: "queue", title: "Add to queue") {
+            ]
+            // Albums and playlists only: an artist has no fixed track list to queue.
+            if c.kind == .album || c.kind == .playlist {
+                r.append(SheetRow(icon: "queue", title: "Add to queue") {
                     Task {
-                        let items: [SongItem]
-                        switch c.kind {
-                        case .album: items = (try? await app.core.getAlbum(id: c.id).items) ?? []
-                        case .playlist: items = (try? await app.core.getPlaylist(id: c.id).items) ?? []
-                        default: items = []
+                        do {
+                            let items = c.kind == .album ? try await app.core.getAlbum(id: c.id).items : try await app.core.getPlaylist(id: c.id).items
+                            if items.isEmpty { app.showToast("Nothing to add from \(c.title)") } else { app.queue(items, from: c.title) }
+                        } catch {
+                            app.fail(friendlyError(error, "Couldn't add to queue"))
                         }
-                        if !items.isEmpty { app.queue(items, from: c.title) }
                     }
-                },
+                })
+            }
+            // Own playlists on this phone can be shared to edit together (App/JamCollabStores.swift).
+            if own && c.id.hasPrefix("LOCALPLAYLIST") {
+                r.append(SheetRow(icon: "user-plus", title: app.collab.isCollab(c.id) ? "Invite more collaborators" : "Invite collaborators") {
+                    Task { if let link = await app.collab.share(c.id) { CollabInvite.present(link, name: c.title, app: app) } }
+                })
+                if app.collab.isCollab(c.id) {
+                    r.append(SheetRow(icon: "x-circle", title: "Stop collaborating") {
+                        app.collab.leave(c.id)
+                        app.showToast("\(c.title) is yours alone again")
+                    })
+                }
+            }
+            r += [
                 pinRow(c),
                 SheetRow(icon: "share-network", title: "Share") { ShareSheet.presentAfterSheet(.item(c), app: app) },
             ]
@@ -267,13 +290,24 @@ struct ActionSheet: View {
                 let inFolder = folders.first { $0.items.contains(c.id) }
                 for f in folders.prefix(6) where f.id != inFolder?.id {
                     r.append(SheetRow(icon: "folder", title: "Move to \(f.name)") {
-                        Task { try? await app.core.moveToFolder(itemId: c.id, folderId: f.id); await app.library.refresh() }
-                        app.showToast("Moved to \(f.name)")
+                        Task {
+                            do {
+                                try await app.core.moveToFolder(itemId: c.id, folderId: f.id)
+                                app.showToast("Moved to \(f.name)")
+                            } catch { app.fail(friendlyError(error, "Couldn't move it to \(f.name)")) }
+                            await app.library.refresh()
+                        }
                     })
                 }
                 if let inFolder {
                     r.append(SheetRow(icon: "folder", title: "Remove from \(inFolder.name)") {
-                        Task { try? await app.core.moveToFolder(itemId: c.id, folderId: nil); await app.library.refresh() }
+                        Task {
+                            do {
+                                try await app.core.moveToFolder(itemId: c.id, folderId: nil)
+                                app.showToast("Removed from \(inFolder.name)")
+                            } catch { app.fail(friendlyError(error, "Couldn't take it out of \(inFolder.name)")) }
+                            await app.library.refresh()
+                        }
                     })
                 }
             }
@@ -287,7 +321,7 @@ struct ActionSheet: View {
             return episodeSheetRows(app, e)
         case .show(let sh):
             return showSheetRows(app, sh)
-        case .sleepTimer, .speed, .chapters, .effects, .aboutRecommendations, .newFolder, .newPlaylist, .addToPlaylist, .editPlaylist, .addSongs:
+        case .sleepTimer, .speed, .chapters, .effects, .aboutRecommendations, .newFolder, .newPlaylist, .newCollab, .addToPlaylist, .editPlaylist, .addSongs:
             return []
         case .sort:
             // Custom order only applies to playlists (Spotify).

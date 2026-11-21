@@ -1,0 +1,15 @@
+# Spotless share relay: Jam and collaborative-playlist channels (README.md).
+# Personal Cloudflare account (~/.config/cloudflare/personal.env), shipped with wrangler from this folder.
+name = "spotless-share"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+account_id = "666776edef92bacf72b63702d197eb54"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "CHANNEL"
+class_name = "Channel"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Channel"]

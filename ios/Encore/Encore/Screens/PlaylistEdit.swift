@@ -27,6 +27,17 @@ struct EditPlaylistSheet: View {
     @State private var removeCover = false
     @State private var imageMenu = false
     @State private var pickerOpen = false
+    @State private var loadFailed = false
+    @State private var attempt = 0
+    @State private var saving = false
+    @State private var confirmDiscard = false
+
+    /// Anything to lose if the sheet closed now.
+    private var changed: Bool {
+        guard loaded else { return false }
+        return name != originalName || desc != originalDesc || picked != nil || removeCover
+            || (originalPublic.map { $0 != isPublic } ?? false) || rows.map(\.rowId) != original
+    }
 
     private var meta: LibPlaylist? { app.library.snapshot.playlists.first { $0.id == id } }
     /// A playlist of yours on the YouTube account (rows are `setVideoId`s there, edits go to YouTube).
@@ -39,12 +50,19 @@ struct EditPlaylistSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if loadFailed {
+                    EntityLoadState(failed: true) { loadFailed = false; attempt += 1 }
+                        .listRowBackground(Palette.sheet).listRowSeparator(.hidden)
+                } else if !loaded {
+                    SkeletonRows(count: 4).listRowBackground(Palette.sheet).listRowSeparator(.hidden)
+                }
                 Section {
                     coverEditor
                         .frame(maxWidth: .infinity)
                         .listRowBackground(Palette.sheet)
                         .listRowSeparator(.hidden)
                     TextField("Playlist name", text: $name)
+                        .onChange(of: name) { _, n in if n.count > 100 { name = String(n.prefix(100)) } }
                         .font(Typo.font(22, .bold))
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("edit-name")
@@ -92,15 +110,27 @@ struct EditPlaylistSheet: View {
             .navigationTitle("Edit playlist")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { if changed { confirmDiscard = true } else { dismiss() } }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", action: save).bold().disabled(!loaded || name.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .accessibilityIdentifier("edit-save")
+                    if saving {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Save", action: save).bold().disabled(!loaded || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .accessibilityIdentifier("edit-save")
+                    }
                 }
             }
         }
         .foregroundStyle(Palette.text)
         .tint(Palette.text)
+        // A swipe down can't throw edits away; Cancel asks first.
+        .interactiveDismissDisabled(changed || saving)
+        .confirmationDialog("Discard changes?", isPresented: $confirmDiscard, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        }
         .photosPicker(isPresented: $pickerOpen, selection: $pick, matching: .images)
         .onChange(of: pick) { _, item in
             guard let item else { return }
@@ -117,9 +147,13 @@ struct EditPlaylistSheet: View {
             Button("Choose photo") { pickerOpen = true }
             if hasCustomCover { Button("Remove photo", role: .destructive) { picked = nil; removeCover = true } }
         }
-        .task {
+        .task(id: attempt) {
             if isAccount {
-                guard let page = try? await app.core.getPlaylist(id: id) else { return }
+                let page: PlaylistPage
+                do { page = try await app.core.getPlaylist(id: id) } catch {
+                    if !FriendlyError.isCancellation(error) { loadFailed = true }
+                    return
+                }
                 accountPage = page
                 rows = page.items.enumerated().map { PlaylistEntry(rowId: Int64($0), position: Int64($0), addedAt: 0, song: $1) }
                 originalName = page.title ?? ""
@@ -127,7 +161,10 @@ struct EditPlaylistSheet: View {
                 // Visibility is YouTube's, and only yours to change.
                 if page.owned, let p = page.privacy { originalPublic = p == "PUBLIC"; isPublic = p == "PUBLIC" }
             } else {
-                rows = (try? await app.core.playlistEntries(id: id)) ?? []
+                do { rows = try await app.core.playlistEntries(id: id) } catch {
+                    if !FriendlyError.isCancellation(error) { loadFailed = true }
+                    return
+                }
                 originalName = meta?.name ?? ""
                 originalDesc = meta?.description ?? ""
             }
@@ -161,7 +198,10 @@ struct EditPlaylistSheet: View {
 
     static let descMax = 300
 
+    /// Saves step by step, then closes. A failed step keeps the sheet open with the edits still in it
+    /// (steps that already went through become the new baseline, so Save again only retries the rest).
     private func save() {
+        guard !saving else { return }
         let newName = name.trimmingCharacters(in: .whitespaces)
         let newDesc = desc.trimmingCharacters(in: .whitespacesAndNewlines)
         let nameChange = newName != originalName ? newName : nil
@@ -170,21 +210,23 @@ struct EditPlaylistSheet: View {
         let kept = rows.map(\.rowId)
         let removed = original.filter { !kept.contains($0) }
         let reordered = kept != original.filter { kept.contains($0) }
-        let cover = picked.flatMap(Self.coverFile)
         let dropCover = removeCover && picked == nil && savedCover != nil
         // An account playlist's rows were numbered by position when loaded: back to its songs.
         let setIds = Dictionary(uniqueKeysWithValues: (accountPage?.items ?? []).enumerated().map { (Int64($0), $1) })
-        dismiss()
+        saving = true
         Task {
-            if let cover {
-                do { _ = try await app.core.setPlaylistCover(playlistId: id, path: cover.path) } catch {
-                    app.showToast((error as? CoreFailure)?.message ?? "Couldn't change the image")
-                }
-                try? FileManager.default.removeItem(at: cover)
-            } else if dropCover {
-                _ = try? await app.core.setPlaylistCover(playlistId: id, path: nil)
-            }
+            defer { saving = false }
+            var step = "the image"
             do {
+                if let picked, let cover = Self.coverFile(picked) {
+                    defer { try? FileManager.default.removeItem(at: cover) }
+                    _ = try await app.core.setPlaylistCover(playlistId: id, path: cover.path)
+                    self.picked = nil
+                } else if dropCover {
+                    _ = try await app.core.setPlaylistCover(playlistId: id, path: nil)
+                    removeCover = false
+                }
+                step = "the name and description"
                 if isAccount, let yt = app.core as? YouTubeLibraryClient {
                     if nameChange != nil || descChange != nil || publicChange != nil {
                         try await yt.editPlaylistDetails(playlistId: id, name: nameChange, description: descChange, public: publicChange)
@@ -193,6 +235,9 @@ struct EditPlaylistSheet: View {
                 } else if nameChange != nil || descChange != nil {
                     try await app.core.updatePlaylist(id: id, name: nameChange, description: descChange)
                 }
+                originalName = newName; originalDesc = newDesc
+                if publicChange != nil { originalPublic = isPublic }
+                step = "the removed songs"
                 if isAccount, let yt = app.core as? YouTubeLibraryClient {
                     let gone = removed.compactMap { setIds[$0] }
                     let tracks = gone.compactMap { s in s.setVideoId.map { (s.videoId, $0) } }
@@ -200,15 +245,24 @@ struct EditPlaylistSheet: View {
                         try await yt.removeManyFromPlaylist(playlistId: id, tracks: tracks)
                         app.account.youtube.noteRemoved(id, videoIds: gone.map(\.videoId))
                     }
+                    original = original.filter { kept.contains($0) }
+                    step = "the new order"
                     let set = { (ids: [Int64]) in ids.compactMap { setIds[$0]?.setVideoId } }
                     if reordered { try await yt.reorderYouTubePlaylist(id, from: set(original), to: set(kept)) }
                 } else {
                     if !removed.isEmpty { try await app.core.removeFromPlaylist(id: id, rowIds: removed) }
+                    original = original.filter { kept.contains($0) }
+                    step = "the new order"
                     if reordered { try await app.core.setPlaylistOrder(id: id, rowIds: kept) }
                 }
+                original = kept
             } catch {
-                app.showToast("Couldn't save the playlist")
+                app.fail(friendlyError(error, "Couldn't save \(step). Your edits are still here."))
+                await app.library.refresh()
+                return
             }
+            dismiss()
+            app.showToast("Playlist saved")
             await app.library.refresh()
         }
     }
@@ -245,6 +299,10 @@ struct AddSongsSheet: View {
     let name: String
     @State private var query = ""
     @State private var results: [SongItem] = []
+    /// The query `results` answer (nil: none yet), and whether the last search failed.
+    @State private var resultsFor: String?
+    @State private var searchFailed = false
+    @State private var searchAttempt = 0
     @State private var added: Set<String> = []
     @State private var recs: [Recommendation] = []
     @State private var recsBatch = 0
@@ -275,6 +333,14 @@ struct AddSongsSheet: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     if query.isEmpty { recommended }
+                    if !query.isEmpty && searchFailed {
+                        EntityLoadState(failed: true) { searchFailed = false; searchAttempt += 1 }
+                    } else if !query.isEmpty && resultsFor != query {
+                        SkeletonRows(count: 5)
+                    } else if !query.isEmpty && results.isEmpty {
+                        Text("No songs found for \"\(query)\"").font(Typo.font(14)).foregroundStyle(Palette.subdued)
+                            .frame(maxWidth: .infinity).padding(.top, Space.xxl)
+                    }
                     ForEach(results) { s in row(s, id: "add-song") }
                 }
             }
@@ -288,17 +354,25 @@ struct AddSongsSheet: View {
             recs = got
             recsLoading = false
         }
-        .task(id: query) {
-            guard !query.isEmpty else { results = []; return }
+        .task(id: "\(query)#\(searchAttempt)") {
+            guard !query.isEmpty else { results = []; resultsFor = nil; searchFailed = false; return }
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
-            results = (try? await app.core.search(query: query)) ?? results
+            let q = query
+            do {
+                let got = try await app.core.search(query: q)
+                guard q == query else { return }
+                results = got; resultsFor = q; searchFailed = false
+            } catch {
+                guard q == query, !FriendlyError.isCancellation(error) else { return }
+                results = []; searchFailed = true
+            }
         }
     }
 
     @ViewBuilder private var recommended: some View {
         if recsLoading && recs.isEmpty {
-            ProgressView().tint(Palette.subdued).frame(maxWidth: .infinity).frame(height: 120)
+            SkeletonRows(count: 3)
         } else if !recs.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Recommended songs").font(Typo.font(18, .bold)).accessibilityAddTraits(.isHeader)
@@ -330,7 +404,7 @@ struct AddSongsSheet: View {
             Spacer(minLength: 0)
             let done = added.contains(s.videoId)
             Button { add(s) } label: {
-                Icon(name: done ? "check-circle" : "plus-circle", fill: done, size: 26)
+                IconSwap(name: done ? "check-circle" : "plus-circle", fill: done, size: 26)
                     .foregroundStyle(done ? Palette.accent : Palette.text).frame(width: 44, height: 44)
             }
             .disabled(done)
@@ -350,7 +424,7 @@ struct AddSongsSheet: View {
                 if !isLocalPlaylistId(id) { app.account.youtube.noteAdded(id, videoIds: [s.videoId]) }
                 app.showToast("Added to \(name)")
             }
-            catch { added.remove(s.videoId); app.showToast("Couldn't add to \(name)") }
+            catch { added.remove(s.videoId); app.fail(friendlyError(error, "Couldn't add to \(name)")) }
             await app.library.refresh()
         }
     }
@@ -362,7 +436,7 @@ struct AddSongsSheet: View {
     let local = isLocalPlaylistId(id)
     app.confirm = ConfirmRequest(title: "Delete \(name)?", message: local ? nil : "It will be deleted from your YouTube account too.", action: "Delete") {
         Task {
-            do { try await app.core.deletePlaylist(id: id) } catch { app.showToast("Couldn't delete \(name)"); return }
+            do { try await app.core.deletePlaylist(id: id) } catch { app.fail(friendlyError(error, "Couldn't delete \(name)")); return }
             if !local { app.account.youtube.forget(id) }
             // Leave the deleted playlist's page wherever it is open.
             for t in [Tab.home, .search, .library] {
@@ -371,7 +445,15 @@ struct AddSongsSheet: View {
             await app.library.refresh()
             guard local else { return app.showToast("Deleted \(name)") }
             app.showToast("Deleted \(name)", action: "Undo") {
-                Task { try? await app.core.restorePlaylist(id: id); await app.library.refresh() }
+                Task {
+                    do {
+                        try await app.core.restorePlaylist(id: id)
+                        app.showToast("Restored \(name)")
+                    } catch {
+                        app.showToast("Couldn't restore \(name). Try Recover playlists in Settings.")
+                    }
+                    await app.library.refresh()
+                }
             }
         }
     }

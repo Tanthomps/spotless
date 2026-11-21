@@ -39,6 +39,7 @@
 	import { createFolder, createPlaylist, toggleLike } from '$lib/kit/actions';
 	import TopBar from '$lib/shell/TopBar.svelte';
 	import PlayerBar from '$lib/shell/PlayerBar.svelte';
+	import RemoteDeviceBar from '$lib/shell/RemoteDeviceBar.svelte';
 	import AboutRecommendations from '$lib/smart/AboutRecommendations.svelte'; // leftovers
 	import RightPanel from '$lib/shell/RightPanel.svelte';
 	import ResizeHandle from '$lib/shell/ResizeHandle.svelte';
@@ -283,7 +284,7 @@
 				     right panel are hidden while it is open and come back as they were on close. It sits
 				     over <main> instead of swapping it out, so the page underneath keeps its state and
 				     scroll position for when the view closes. -->
-				<div class="min-w-0" style="grid-area:4/1/5/-1"><PlayerBar /></div>
+				<div class="min-w-0" style="grid-area:4/1/5/-1"><RemoteDeviceBar /><PlayerBar /></div>
 				<div class="relative min-h-0 min-w-0" style="grid-area:2/3">
 					<main
 						id="main-view"

@@ -5,10 +5,24 @@ import SwiftUI
 final class LyricsModel {
     var lyrics: Lyrics?
     var loadedFor: String?
+    /// Loading, a real "no lyrics" answer and a failed fetch look different (and only a failure retries).
+    enum Phase { case loading, failed, done }
+    var phase: Phase = .loading
     func load(_ app: AppModel) async {
         guard let s = app.player.current, s.videoId != loadedFor else { return }
         loadedFor = s.videoId
-        lyrics = try? await app.core.getLyrics(videoId: s.videoId, title: s.title, artists: s.artists, duration: s.seconds)
+        phase = .loading
+        lyrics = nil
+        do {
+            let l = try await app.core.getLyrics(videoId: s.videoId, title: s.title, artists: s.artists, duration: s.seconds)
+            guard loadedFor == s.videoId else { return }
+            lyrics = l
+            phase = .done
+        } catch {
+            guard loadedFor == s.videoId else { return }
+            if FriendlyError.isCancellation(error) { loadedFor = nil; return }
+            phase = .failed
+        }
     }
     /// Index of the line being sung (synced lyrics), or nil before the first cue.
     func activeIndex(at seconds: Double) -> Int? { lyrics?.activeIndex(at: seconds) }
@@ -71,7 +85,7 @@ struct LyricsCard: View {
                 .accessibilityIdentifier("lyrics-expand")
             }
             if model.lines.isEmpty {
-                Text(model.lyrics == nil ? "Lyrics aren't available for this song" : "♪").font(Typo.lyricsCard).foregroundStyle(.black.opacity(0.6))
+                LyricsStatus(model: model, font: Typo.lyricsCard, color: .black.opacity(0.6))
             } else {
                 let window = lineWindow(active)
                 VStack(alignment: .leading, spacing: 6) {
@@ -144,6 +158,9 @@ struct LyricsFullView: View {
                 ScrollView(showsIndicators: false) {
                     // 26/700, 6 pt line spacing, 16 pt between lines, insets 24.
                     VStack(alignment: .leading, spacing: 16) {
+                        if model.lines.isEmpty {
+                            LyricsStatus(model: model, font: Typo.lyricsFull, color: Palette.text.opacity(0.7))
+                        }
                         ForEach(model.lines, id: \.0) { i, line in
                             Text(line.text).font(Typo.lyricsFull).lineSpacing(6).foregroundStyle(lineColor(i, active))
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -263,9 +280,9 @@ struct UserScrollWatch: ViewModifier {
 }
 
 /// The queue (Spotify 9.1.90): a floating dark-glass sheet inset 8 pt over Now Playing, radius ~36,
-/// grabber; "Queue" 22/700 with "Playing from: <context>" and an Edit pill; the now-playing row with a
+/// grabber; "Queue" 22/700 with "Playing <context>" and an Edit pill; the now-playing row with a
 /// white pause circle; "Next in queue" (Clear queue) and "Next from: …" sections with drag handles;
-/// three glass footer buttons (Shuffle · Repeat · Timer). Edit adds selection circles and swaps the
+/// four glass footer buttons (Mix · Shuffle · Repeat · Timer). Edit adds selection circles and swaps the
 /// footer for Remove / Add to playlist.
 struct QueueView: View {
     @Environment(AppModel.self) private var app
@@ -275,6 +292,10 @@ struct QueueView: View {
     @State private var drag: CGFloat = 0
     @State private var pill: String?
     @State private var pillTask: Task<Void, Never>?
+    /// Spotify opens the queue at ~40% of the screen over Now Playing; a drag up takes it full height.
+    @State private var expanded = false
+    @State private var mixOpen = false
+    @State private var crossfade: Double?
 
     var body: some View {
         let p = app.player
@@ -310,7 +331,11 @@ struct QueueView: View {
                 List(selection: editing ? $selection : nil) {
                     if let cur = p.current {
                         nowRow(cur).moveDisabled(true).selectionDisabled()
-                            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 4, trailing: 16))
+                        // Full-width hairline under the playing song (Spotify).
+                        Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
+                            .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                            .moveDisabled(true).selectionDisabled().accessibilityHidden(true)
                     }
                     if !queued.isEmpty {
                         Section {
@@ -326,7 +351,7 @@ struct QueueView: View {
                                     .buttonStyle(.borderless)
                                     .accessibilityIdentifier("queue-clear")
                             }
-                            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 20))
                         }
                     }
                     if !rest.isEmpty {
@@ -335,7 +360,7 @@ struct QueueView: View {
                                 .onMove { from, to in move(rest, from, to) }
                         } header: {
                             sectionTitle(p.queue.sourceName.map { "Next from: \($0)" } ?? "Next up")
-                                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 20))
                         }
                     }
                     if !auto.isEmpty {
@@ -343,24 +368,20 @@ struct QueueView: View {
                             ForEach(auto, id: \.index) { row($0.song, index: $0.index).tag($0.index) }
                                 .onMove { from, to in move(auto, from, to) }
                         } header: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                sectionTitle(upNext ? "Next up" : "Next: Autoplay")
-                                if !upNext {
-                                    Text("Similar songs keep playing when your music ends.")
-                                        .font(Typo.font(13)).foregroundStyle(Palette.subdued)
-                                }
-                            }
-                            .accessibilityElement(children: .combine)
-                            .accessibilityIdentifier("queue-autoplay")
-                            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                            sectionTitle(upNext ? "Next up" : "Next up: Recommended tracks")
+                                .accessibilityIdentifier("queue-autoplay")
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 20))
                         }
                     }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .environment(\.editMode, .constant(.active))
-                .environment(\.defaultMinListRowHeight, 64)
+                .environment(\.defaultMinListRowHeight, 1)
                 .tint(Palette.accent)   // accent selection circles
+                .background(ReorderHandleStyle())
+                // Selection is by queue position: if the queue moves under it, start the selection over.
+                .onChange(of: "\(app.player.queue.items.count)#\(app.player.queue.currentIndex)") { _, _ in selection = [] }
                 footer
                     .padding(.horizontal, Space.l).padding(.top, Space.s)
                     .padding(.bottom, max(Space.l, insets.bottom - Space.s))
@@ -368,9 +389,9 @@ struct QueueView: View {
                         if let pill {
                             Text(pill).font(Typo.font(13, .bold)).foregroundStyle(Palette.text)
                                 .padding(.horizontal, 12).frame(height: 30)
-                                .background(Capsule().fill(Color(hex: "#2a2a2a")))
+                                .glassCapsule()
                                 .offset(y: -38)
-                                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                                .transition(Motion.pop)
                                 .accessibilityIdentifier("queue-pill")
                         }
                     }
@@ -378,22 +399,21 @@ struct QueueView: View {
             .foregroundStyle(Palette.text)
             .background {
                 // Dark Liquid Glass: blur of Now Playing behind, darkened so rows stay legible.
-                RoundedRectangle(cornerRadius: 36, style: .continuous).fill(.ultraThinMaterial)
-                    .overlay(RoundedRectangle(cornerRadius: 36, style: .continuous).fill(Color(hex: "#121212").opacity(0.72)))
-                    .overlay(RoundedRectangle(cornerRadius: 36, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.5))
+                SheetGlass(radius: 36)
             }
             .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
             .padding(.horizontal, 8)
-            .padding(.top, insets.top + 8)
+            .padding(.top, expanded ? insets.top + 8 : UIScreen.main.bounds.height * 0.38)
             .padding(.bottom, 8)
             .offset(y: drag)
+            .sheet(isPresented: $mixOpen) { mixSheet.presentationDetents([.height(190)]).presentationDragIndicator(.visible).presentationCornerRadius(Radius.glassSheet) }
             // The app's toasts sit under Now Playing; the queue shows its own ("Queue cleared · Undo")
             // above the footer buttons.
             if let toast = app.toast {
                 ToastView(message: toast)
                     .padding(.horizontal, 8)
                     .padding(.bottom, max(Space.l, insets.bottom - Space.s) + 84)
-                    .transition(Motion.slide(.bottom, fade: true))
+                    .transition(Motion.toast)
                     .zIndex(2)
             }
         }
@@ -410,10 +430,14 @@ struct QueueView: View {
 
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 6)
-            .onChanged { drag = max(0, $0.translation.height) }
+            .onChanged { v in drag = expanded ? max(0, v.translation.height) : max(-80, v.translation.height * (v.translation.height < 0 ? 0.4 : 1)) }
             .onEnded { v in
-                if v.translation.height > 140 || v.predictedEndTranslation.height > 400 { close() }
-                withAnimation(Motion.spring) { drag = 0 }
+                let down = v.translation.height > 140 || v.predictedEndTranslation.height > 400
+                let up = v.translation.height < -40 || v.predictedEndTranslation.height < -200
+                withAnimation(Motion.spring) {
+                    if up && !expanded { expanded = true } else if down && expanded { expanded = false } else if down { close() }
+                    drag = 0
+                }
             }
     }
 
@@ -422,8 +446,8 @@ struct QueueView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Queue").font(Typo.font(22, .bold))
                 if let src = p.queue.sourceName, !src.isEmpty {
-                    (Text("Playing from: ").foregroundStyle(Palette.muted) + Text(src).font(Typo.font(14, .bold)))
-                        .font(Typo.font(14)).lineLimit(1)
+                    (Text("Playing ").foregroundStyle(Palette.subdued) + Text(src).foregroundStyle(Palette.text))
+                        .font(Typo.font(15)).lineLimit(1)
                 }
             }
             Spacer(minLength: Space.m)
@@ -436,19 +460,19 @@ struct QueueView: View {
             }
             .accessibilityIdentifier("queue-edit")
         }
-        .padding(.leading, 20).padding(.trailing, 16)
-        .padding(.top, Space.m).padding(.bottom, Space.s)
+        .padding(.leading, 16).padding(.trailing, 16)
+        .padding(.top, Space.s).padding(.bottom, Space.s)
     }
 
     private func sectionTitle(_ t: String) -> some View {
-        Text(t).font(Typo.font(16, .bold)).foregroundStyle(Palette.text).textCase(nil).lineLimit(1)
+        Text(t).font(Typo.font(15)).foregroundStyle(Palette.subdued).textCase(nil).lineLimit(1)
             .padding(.top, Space.m).padding(.bottom, Space.xs)
     }
 
     /// Now playing: accent title with the equaliser, and a 32 pt white play/pause circle.
     private func nowRow(_ s: SongItem) -> some View {
         HStack(spacing: Space.m) {
-            ArtImage(url: s.thumbnail, px: 144, radius: Radius.xs).frame(width: 48, height: 48)
+            ArtImage(url: s.thumbnail, px: 144, radius: Radius.xs).frame(width: 46, height: 46)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     EqualizerGlyph(animating: !app.player.paused)
@@ -462,8 +486,8 @@ struct QueueView: View {
             Spacer(minLength: 0)
             Button { app.player.togglePause() } label: {
                 Circle().fill(Color.white).frame(width: 32, height: 32)
-                    .overlay(Icon(name: app.player.paused ? "play" : "pause", fill: true, size: 14).foregroundStyle(.black)
-                        .offset(x: app.player.paused ? 1 : 0))
+                    .overlay(IconSwap(name: app.player.paused ? "play" : "pause", fill: true, size: 14).foregroundStyle(.black)
+                        .offset(x: app.player.paused ? -0.2 : 0))
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.borderless)
@@ -477,7 +501,9 @@ struct QueueView: View {
 
     private func row(_ s: SongItem, index: Int) -> some View {
         HStack(spacing: Space.m) {
-            ArtImage(url: s.thumbnail, px: 144, radius: Radius.xs).frame(width: 48, height: 48)
+          // The tap-to-play area stops before the suggestion buttons, so − and + never also play the row.
+          HStack(spacing: Space.m) {
+            ArtImage(url: s.thumbnail, px: 144, radius: Radius.xs).frame(width: 46, height: 46)
             VStack(alignment: .leading, spacing: 3) {
                 Text(s.title).font(Typo.rowTitle).foregroundStyle(Palette.text).lineLimit(1)
                 HStack(spacing: 4) {
@@ -488,33 +514,49 @@ struct QueueView: View {
                 }
             }
             Spacer(minLength: 0)
+          }
+          .contentShape(Rectangle())
+          // A tap plays that row (Spotify); in Edit mode the list's own tap selects it instead.
+          .simultaneousGesture(TapGesture().onEnded { app.player.playIndex(index) }, including: editing ? .subviews : .all)
             if isSuggestion(s) && !editing {
                 Button {
                     Haptics.impact(.light)
+                    let before = app.settings.smartShuffle.recIds
                     app.settings.smartShuffle.recIds.removeAll { $0 == s.videoId }
-                    Task { if let st = try? await app.core.smartShuffleRemove(videoId: s.videoId) { app.settings.smartShuffle = st } }
-                    app.showToast("Removed suggestion")
+                    Task {
+                        do {
+                            app.settings.smartShuffle = try await app.core.smartShuffleRemove(videoId: s.videoId)
+                            app.showToast("Removed suggestion")
+                        } catch {
+                            app.settings.smartShuffle.recIds = before
+                            app.fail(friendlyError(error, "Couldn't remove that suggestion"))
+                        }
+                    }
                 } label: { Icon(name: "minus-circle", size: 22).foregroundStyle(Palette.subdued).frame(width: 36, height: 44) }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Remove suggestion")
                 Button {
                     Haptics.impact(.light)
+                    let before = app.settings.smartShuffle.recIds
                     app.settings.smartShuffle.recIds.removeAll { $0 == s.videoId }
                     Task {
-                        if let st = try? await app.core.smartShuffleKeep(videoId: s.videoId) { app.settings.smartShuffle = st }
-                        if !app.library.isLiked(s.videoId) { app.toggleLike(s) }
+                        do {
+                            app.settings.smartShuffle = try await app.core.smartShuffleKeep(videoId: s.videoId)
+                            if !app.library.isLiked(s.videoId) { app.toggleLike(s) }
+                        } catch {
+                            app.settings.smartShuffle.recIds = before
+                            app.fail(friendlyError(error, "Couldn't keep that suggestion"))
+                        }
                     }
                 } label: { Icon(name: "plus-circle", size: 22).foregroundStyle(Palette.subdued).frame(width: 36, height: 44) }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Keep suggestion")
             }
         }
-        .frame(height: 64)
+        .frame(height: 62)
         .contentShape(Rectangle())
-        // A tap plays that row (Spotify); in Edit mode the list's own tap selects it instead.
-        .simultaneousGesture(TapGesture().onEnded { app.player.playIndex(index) }, including: editing ? .subviews : .all)
         .accessibilityAddTraits(.isButton)
-        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 12))
+        .listRowInsets(EdgeInsets(top: 0, leading: 15, bottom: 0, trailing: 12))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .accessibilityElement(children: .combine)
@@ -548,11 +590,19 @@ struct QueueView: View {
                 glassButton("Remove", icon: "minus-circle", on: false, enabled: !selection.isEmpty) {
                     for i in selection.sorted(by: >) { app.player.remove(at: i) }
                     selection = []
+                    // ponytail: Undo puts them back right after the current song, not at their old spots.
+                    let removed = songs
+                    app.showToast(removed.count == 1 ? "Removed from queue" : "Removed \(counted(removed.count, "song"))", action: "Undo") {
+                        app.player.playNext(removed)
+                    }
                 }
                 glassButton("Add to playlist", icon: "music-notes-plus", on: false, enabled: !selection.isEmpty) {
                     app.sheet = .addToPlaylist(songs); selection = []
                 }
             } else {
+                // Mix: how songs hand over (crossfade), Spotify's first footer button.
+                glassButton("Mix", icon: "sliders-horizontal", on: (app.settings.audio?.crossfadeSecs ?? 0) > 0) { mixOpen = true }
+                    .accessibilityIdentifier("queue-mix")
                 glassButton("Shuffle", icon: "shuffle", on: app.player.shuffle) {
                     let on = !app.player.shuffle
                     app.player.toggleShuffle()
@@ -562,6 +612,27 @@ struct QueueView: View {
                 glassButton("Timer", icon: "timer", on: app.settings.sleep.mode != nil) { app.sheet = .sleepTimer }
             }
         }
+    }
+
+    /// Mix: the crossfade length, saved when the slider is let go (same setting as Settings › Playback).
+    private var mixSheet: some View {
+        let secs = crossfade ?? Double(app.settings.audio?.crossfadeSecs ?? 0)
+        return VStack(alignment: .leading, spacing: Space.s) {
+            HStack {
+                Text("Transitions").font(Typo.font(18, .bold))
+                Spacer()
+                Text(secs == 0 ? "Off" : "\(Int(secs)) s crossfade").font(Typo.font(14)).foregroundStyle(Palette.subdued).monospacedDigit()
+            }
+            Text("Blend the end of each song into the next.").font(Typo.font(13)).foregroundStyle(Palette.subdued)
+            Slider(value: Binding(get: { secs }, set: { crossfade = $0.rounded() }), in: 0...12, step: 1, onEditingChanged: { editing in
+                if !editing, let c = crossfade { app.settings.setCrossfade(Int(c)); crossfade = nil }
+            })
+            .tint(Palette.accent)
+            .accessibilityLabel("Crossfade seconds")
+        }
+        .padding(Space.gutter).padding(.top, Space.s)
+        .foregroundStyle(Palette.text)
+        .presentationBackground { SheetGlass() }
     }
 
     /// ~108×56, radius 12, 24 pt icon over a 12 pt label; accent when active.
@@ -580,5 +651,94 @@ struct QueueView: View {
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.4)
         .accessibilityIdentifier("queue-\(t.lowercased())")
+    }
+}
+
+/// What the lyrics area says when there are no lines: grey placeholder lines while loading, a retry
+/// after a failed fetch, or that this song has none.
+struct LyricsStatus: View {
+    @Environment(AppModel.self) private var app
+    let model: LyricsModel
+    let font: Font
+    let color: Color
+    var body: some View {
+        switch model.phase {
+        case .loading:
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach([0.9, 0.7, 0.8], id: \.self) { w in
+                    GeometryReader { g in Capsule().fill(color.opacity(0.25)).frame(width: g.size.width * w, height: 14) }.frame(height: 14)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Loading lyrics")
+        case .failed:
+            VStack(alignment: .leading, spacing: Space.s) {
+                Text("Couldn't load lyrics").font(font).foregroundStyle(color)
+                Button("Try again") { Task { await model.reload(app) } }
+                    .font(Typo.font(14, .bold)).foregroundStyle(color)
+                    .padding(.horizontal, 16).frame(height: 32)
+                    .overlay(Capsule().stroke(color, lineWidth: 1))
+                    .accessibilityIdentifier("lyrics-retry")
+            }
+        case .done:
+            Text(model.lyrics == nil ? "Lyrics aren't available for this song" : "♪").font(font).foregroundStyle(color)
+        }
+    }
+}
+
+/// The queue's reorder handles in Spotify's style (bold white ≡) instead of iOS's thin grey ones.
+/// SwiftUI's List has no API for the reorder control, so this finds the list's collection view and
+/// restyles each control's glyph as rows appear or scroll in. The control itself still does the drag.
+// ponytail: walks UIKit internals by class name ("Reorder"); if an iOS update renames it, the handles
+// just fall back to iOS's grey ones.
+struct ReorderHandleStyle: UIViewRepresentable {
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ v: Probe, context: Context) { DispatchQueue.main.async { v.restyle() } }
+
+    final class Probe: UIView {
+        private var watch: NSKeyValueObservation?
+        private weak var list: UICollectionView?
+        private static let glyph = UIImage(systemName: "line.3.horizontal",
+                                           withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold))?
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            isUserInteractionEnabled = false
+            DispatchQueue.main.async { self.attach() }
+        }
+
+        private func attach() {
+            guard list == nil, let root = window else { return }
+            // The List's collection view is a sibling branch: search from the nearest common container.
+            var node: UIView? = superview
+            while let n = node, list == nil {
+                list = Self.find(UICollectionView.self, in: n)
+                node = n.superview
+                if n === root { break }
+            }
+            watch = list?.observe(\.contentOffset) { [weak self] _, _ in self?.restyle() }
+            restyle()
+        }
+
+        func restyle() {
+            guard let list else { attach(); return }
+            Self.walk(list) { v in
+                guard String(describing: type(of: v)).contains("Reorder") else { return }
+                for case let img as UIImageView in v.subviews where img.image !== Self.glyph {
+                    img.image = Self.glyph
+                    img.contentMode = .center
+                }
+            }
+        }
+
+        private static func find<T: UIView>(_: T.Type, in v: UIView) -> T? {
+            if let t = v as? T { return t }
+            for s in v.subviews { if let t = find(T.self, in: s) { return t } }
+            return nil
+        }
+        private static func walk(_ v: UIView, _ f: (UIView) -> Void) {
+            f(v); for s in v.subviews { walk(s, f) }
+        }
     }
 }

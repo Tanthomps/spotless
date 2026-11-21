@@ -22,12 +22,13 @@ struct EncoreApp: App {
                 }
             }
             .overlay { LaunchCover() }
+            .dynamicTypeSize(...Typo.maxTextSize)
         }
     }
 }
 
 /// stream: pod-fixes. The launch screen's own picture as the first SwiftUI frame: Info.plist's
-/// `UILaunchScreen` (the `LaunchBackground` colour, the `LaunchMark2` image at its 120 pt size,
+/// `UILaunchScreen` (the `LaunchBackground` colour, the `LaunchMark3` image at its 120 pt size,
 /// centred in the safe area), faded out once the UI under it is up. The hand-off is then a fade,
 /// not a cut to a different picture.
 private struct LaunchCover: View {
@@ -36,7 +37,7 @@ private struct LaunchCover: View {
         if shown {
             ZStack {
                 Color("LaunchBackground").ignoresSafeArea()
-                Image("LaunchMark2")
+                Image("LaunchMark3")
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -81,7 +82,7 @@ private struct AppRoot: View {
             .onOpenURL { app.router.handle($0, app: app) }
             // Device sync polls fast in front and slowly behind; coming back syncs at once.
             .onChange(of: phase) { _, p in
-                if p == .active { app.devices.setActive(true) } else if p == .background { app.devices.setActive(false) }
+                if p == .active { app.devices.setActive(true); app.collab.resume() } else if p == .background { app.devices.setActive(false) }
             }
     }
 }
@@ -126,7 +127,9 @@ final class CoreBoot {
     private func boot() {
         attempts += 1
         do {
-            state = .ready(AppModel(core: try start()))
+            let core = try start()
+            ArtworkCache.resolver = { r in await artLookup(core, r) }
+            state = .ready(AppModel(core: core))
         } catch {
             let raw = FriendlyError.raw(error)
             coreLog.fault("core failed to start (attempt \(self.attempts)): \(raw, privacy: .public)")
@@ -267,4 +270,26 @@ enum Diagnostics {
         try? report(failure).write(to: url, atomically: true, encoding: .utf8)
         return url
     }
+}
+
+/// Art for an item that arrived without any (imported Spotify history, local "Mix" shelves): its
+/// own page's art by id shape, else a generated cover for a mix so it never shows a bare note.
+func artLookup(_ core: CoreClient, _ r: ArtRef) async -> String? {
+    let id = r.id
+    var found: String?
+    if id.hasPrefix("UC") {
+        found = try? await core.getArtist(id: id).thumbnail
+    } else if id.hasPrefix("MPRE") || id.hasPrefix("OLAK") {
+        found = try? await core.getAlbum(id: id).thumbnail
+    } else if id.hasPrefix("VL") || id.hasPrefix("PL") || id.hasPrefix("RD") || id.hasPrefix("LOCALPLAYLIST") {
+        found = try? await core.getPlaylist(id: id).thumbnail
+    } else if id.count == 11 {
+        found = try? await core.song(videoId: id).thumbnail
+    }
+    if let found { return found }
+    if r.title.hasSuffix(" Mix") || r.title.hasSuffix(" Radio") {
+        let n = r.title.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return "mfy:\(r.title.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? r.title)#\(abs(n) % 10)"
+    }
+    return nil
 }

@@ -55,6 +55,7 @@ pub mod state;
 mod instant_tests; // stream: instant
 pub mod stats;
 pub mod sync; // device sync (docs/SYNC.md)
+pub mod presence; // "Playing on <device>" over device sync
 pub mod videoproxy;
 
 #[cfg(test)]

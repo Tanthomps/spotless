@@ -41,6 +41,11 @@ struct AddToPlaylistSheet: View {
                         ForEach(savedIn) { row($0) }
                         Spacer().frame(height: Space.l)
                     }
+                    if membershipUnknown {
+                        Text("Couldn't check which playlists already have this song.")
+                            .font(Typo.font(13)).foregroundStyle(Palette.subdued)
+                            .padding(.horizontal, Space.gutter).padding(.bottom, Space.s)
+                    }
                     if !others.isEmpty {
                         sectionHeader(query.isEmpty ? "Recently updated" : "Playlists")
                         ForEach(others) { row($0) }
@@ -144,7 +149,7 @@ struct AddToPlaylistSheet: View {
                 Spacer(minLength: Space.s)
                 if on {
                     Icon(name: "check-circle", fill: true, size: 26).foregroundStyle(Palette.accent)
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(Motion.pop)
                 } else {
                     Circle().stroke(Palette.subdued, lineWidth: 1.5).frame(width: 22, height: 22).frame(width: 26, height: 26)
                 }
@@ -154,6 +159,7 @@ struct AddToPlaylistSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PickerRowPress())
+        .pulse(on: on)
         .animation(.easeOut(duration: 0.15), value: on)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(r.title), \(r.subtitle)")
@@ -188,7 +194,7 @@ struct AddToPlaylistSheet: View {
 
     private var allRows: [PickerRow] {
         let liked = PickerRow(id: likedPlaylistId, title: "Liked Songs",
-                              subtitle: app.library.likedIds.count == 1 ? "1 song" : "\(app.library.likedIds.count) songs", art: nil)
+                              subtitle: counted(app.library.likedIds.count, "song"), art: nil)
         let lib = app.library
         var lists = lib.snapshot.playlists.map {
             (lib.recentsKey($0.id, base: $0.updatedAt), PickerRow(id: $0.id, title: $0.name, subtitle: $0.count == 1 ? "1 song" : "\($0.count) songs", art: $0.cover ?? $0.thumbnail))
@@ -216,6 +222,9 @@ struct AddToPlaylistSheet: View {
         allRows.filter { (!query.isEmpty || !initial.contains($0.id)) && matches($0.title) }
     }
 
+    /// Couldn't ask which playlists already have the song: the ticks may be missing some.
+    @State private var membershipUnknown = false
+
     private func load() async {
         guard !loaded else { return }
         loaded = true
@@ -224,8 +233,8 @@ struct AddToPlaylistSheet: View {
             if app.library.isLiked(s.videoId) { start.insert(likedPlaylistId) }
             if app.account.signedIn { start.formUnion(app.account.youtube.index[s.videoId] ?? []) }
             do { start.formUnion(try await app.core.playlistsContaining(videoId: s.videoId)) } catch {
-                // The ticks then only know Liked Songs; say so in the log, the sheet still works.
-                _ = friendlyError(error, "Couldn't check which playlists have this song")
+                // The ticks then only know Liked Songs: say so, so a missing tick isn't trusted.
+                membershipUnknown = !FriendlyError.isCancellation(error)
             }
         }
         initial = start

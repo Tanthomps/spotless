@@ -24,6 +24,8 @@ struct MiniPlayer: View {
                     .frame(width: Metrics.miniCover, height: Metrics.miniCover)
                     .id(song?.thumbnail)
                     .transition(.opacity)
+                    .opacity(ArtFlight.shared.flying ? 0 : 1)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ArtFlight.shared.mini = $0 }
             }
             GeometryReader { geo in
                 carousel(width: geo.size.width)
@@ -46,9 +48,9 @@ struct MiniPlayer: View {
                 if let s = song {
                     let liked = app.library.isLiked(s.videoId)
                     Button { app.likeButton(s) } label: {
-                        Icon(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 24)
+                        IconSwap(name: liked ? "check-circle" : "plus-circle", fill: liked, size: 24)
                             .foregroundStyle(liked ? Palette.accent : Palette.text).frame(width: 44, height: 44)
-                            .contentTransition(.symbolEffect(.replace))
+                            .pulse(on: liked)
                     }
                     .accessibilityLabel(liked ? "Saved in Liked Songs" : "Add to Liked Songs")
                     .accessibilityHint(liked ? "Opens Add to playlist" : "")
@@ -60,7 +62,7 @@ struct MiniPlayer: View {
                         if player.loading {
                             ProgressView().tint(Palette.text)
                         } else {
-                            Icon(name: player.paused ? "play" : "pause", fill: true, size: 24).foregroundStyle(Palette.text)
+                            IconSwap(name: player.paused ? "play" : "pause", fill: true, size: 24).foregroundStyle(Palette.text)
                         }
                     }
                     .frame(width: 44, height: 44)

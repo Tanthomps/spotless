@@ -64,6 +64,7 @@ export const jamPage = /* html */ `<!doctype html><html lang="en"><head><meta ch
   <div class="now"><img id="art" alt=""><div class="row"><div class="grow"><div class="t" id="title">Waiting for the host…</div><div class="a" id="artists"></div></div></div>
     <div class="controls"><button class="icon" id="prev" aria-label="Previous">⏮</button><button class="play" id="pp" aria-label="Play or pause">▶</button><button class="icon" id="next" aria-label="Next">⏭</button></div>
     <p style="text-align:center;margin:12px 0 0"><button class="btn ghost" id="listen">Listen on this device</button></p>
+    <p class="sub" id="listenNote" style="text-align:center;margin:8px 0 0" aria-live="polite"></p>
   </div>
   <div id="members"></div>
   <h2>Add songs</h2><input id="q" placeholder="Search songs" enterkeyhint="search"><div id="results"></div>
@@ -132,12 +133,22 @@ $('queue').onclick = (e) => { const v = e.target.dataset.rm; if (v) send({ t: 'r
 $('pp').onclick = () => state && send({ t: 'cmd', op: state.playing ? 'pause' : 'play' });
 $('next').onclick = () => send({ t: 'cmd', op: 'next' });
 $('prev').onclick = () => send({ t: 'cmd', op: 'prev' });
-let rid = '', timer = 0;
-$('q').oninput = () => { clearTimeout(timer); timer = setTimeout(() => { const v = $('q').value.trim(); if (!v) return results([]); rid = Math.random().toString(36).slice(2); send({ t: 'search', rid, q: v }); $('results').innerHTML = '<p class="sub">Searching…</p>'; }, 350); };
+let rid = '', timer = 0, waiting = 0;
+// Searches run on the host's phone: if it doesn't answer in 8 s (app closed, no signal), say so.
+$('q').oninput = () => { clearTimeout(timer); timer = setTimeout(() => {
+  const v = $('q').value.trim(); if (!v) return results([]);
+  rid = Math.random().toString(36).slice(2); const mine = rid;
+  send({ t: 'search', rid, q: v }); $('results').innerHTML = '<p class="sub">Searching…</p>';
+  clearTimeout(waiting);
+  waiting = setTimeout(() => { if (rid === mine) $('results').innerHTML = '<p class="sub">The host didn’t answer. Their app may be closed. <button class="btn ghost" id="again">Try again</button></p>'; }, 8000);
+}, 350); };
+$('results').addEventListener('click', (e) => { if (e.target.id === 'again') $('q').oninput(); });
 let found = [];
 function results(items) {
+  clearTimeout(waiting);
   found = items;
-  $('results').innerHTML = items.map((it, i) => '<div class="row"><img src="' + esc(it.thumbnail) + '" alt=""><div class="grow"><div class="t">' + esc(it.title) + '</div><div class="a">' + esc(it.artists) + '</div></div><button class="icon" aria-label="Add" data-add="' + i + '">＋</button></div>').join('') || (items === undefined ? '' : '');
+  const v = $('q').value.trim();
+  $('results').innerHTML = items.map((it, i) => '<div class="row"><img src="' + esc(it.thumbnail) + '" alt=""><div class="grow"><div class="t">' + esc(it.title) + '</div><div class="a">' + esc(it.artists) + '</div></div><button class="icon" aria-label="Add" data-add="' + i + '">＋</button></div>').join('') || (v ? '<p class="sub">No songs found for “' + esc(v) + '”.</p>' : '');
 }
 $('results').onclick = (e) => { const i = e.target.dataset.add; if (i != null) { send({ t: 'add', song: found[+i] }); e.target.textContent = '✓'; } };
 // Listening here: a hidden YouTube player follows the host (song, position, play/pause).
@@ -148,7 +159,12 @@ $('listen').onclick = () => {
   else follow();
 };
 window.onYouTubeIframeAPIReady = () => {
-  player = new YT.Player('yt', { height: '1', width: '1', playerVars: { playsinline: 1, controls: 0 }, events: { onReady: () => { ytReady = true; follow(); } } });
+  player = new YT.Player('yt', { height: '1', width: '1', playerVars: { playsinline: 1, controls: 0 }, events: {
+    onReady: () => { ytReady = true; follow(); },
+    // 101/150: the owner blocks playing it outside YouTube; 100: removed. The Jam keeps going.
+    onError: (e) => { $('listenNote').textContent = (e.data === 101 || e.data === 150 || e.data === 100) ? "This song can't play in the browser. It'll pick up on the next one." : "Couldn't play this song here."; },
+    onStateChange: (e) => { if (e.data === 1) $('listenNote').textContent = ''; }
+  } });
 };
 function follow() {
   if (!player || !ytReady || !state) return;

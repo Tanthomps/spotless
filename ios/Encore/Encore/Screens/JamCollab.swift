@@ -71,8 +71,14 @@ struct JamPill: View {
             HStack(spacing: 6) {
                 Icon(name: "users-three", size: 14)
                 Text(jam.role == .host ? "Your Jam" : "\(jam.state?.host.name ?? "Someone")'s Jam").font(Typo.font(13, .bold))
-                Text("· \(counted(max(1, jam.members.count), "person", "people"))").font(Typo.font(13))
-                if !jam.connected { ProgressView().controlSize(.mini).tint(.black) }
+                if jam.trouble {
+                    Text("· Can't connect").font(Typo.font(13))
+                } else if jam.hostAway {
+                    Text("· Host is away").font(Typo.font(13))
+                } else {
+                    Text("· \(counted(max(1, jam.members.count), "person", "people"))").font(Typo.font(13))
+                    if !jam.connected { ProgressView().controlSize(.mini).tint(.black) }
+                }
             }
             .foregroundStyle(.black)
             .padding(.horizontal, 12).frame(height: 28)
@@ -91,6 +97,7 @@ struct JamSheet: View {
     @State private var results: [SongItem] = []
     @State private var searching = false
     @State private var added = Set<String>()
+    @State private var name = ""
 
     var body: some View {
         let jam = app.jam!
@@ -98,7 +105,33 @@ struct JamSheet: View {
             VStack(alignment: .leading, spacing: Space.l) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(jam.role == .host ? "Your Jam" : "\(jam.state?.host.name ?? "Someone")'s Jam").font(Typo.font(24, .bold))
-                    Text(jam.connected ? "Everyone hears the same queue." : "Connecting…").font(Typo.font(14)).foregroundStyle(Palette.subdued)
+                    Text(jam.connected ? "Everyone hears the same queue." : jam.trouble ? "Can't reach the Jam." : "Connecting…")
+                        .font(Typo.font(14)).foregroundStyle(Palette.subdued)
+                }
+                // Problems first, each with a way forward.
+                if jam.trouble {
+                    notice("warning-circle", "Couldn't reach the Jam", "Check your connection. It keeps trying in the background.", action: "Try again") { jam.retry() }
+                } else if jam.hostAway {
+                    notice("clock", "\(jam.state?.host.name ?? "The host") is away",
+                           "Their app may be closed or offline. Playback picks up again when they're back.", action: nil) {}
+                }
+                // Asked once: without it everyone in the Jam would be "You".
+                if jam.savedName == nil {
+                    VStack(alignment: .leading, spacing: Space.s) {
+                        Text("What should others call you?").font(Typo.font(15, .bold))
+                        HStack(spacing: Space.s) {
+                            TextField("", text: $name, prompt: Text("Your name").foregroundStyle(Color(hex: "#535353")))
+                                .font(Typo.font(15, .medium)).foregroundStyle(.black).submitLabel(.done)
+                                .onSubmit { jam.setName(name) }
+                                .padding(.horizontal, Space.m).frame(height: 40)
+                                .background(RoundedRectangle(cornerRadius: Radius.m, style: .continuous).fill(.white))
+                                .accessibilityIdentifier("jam-name")
+                            Button("Save") { jam.setName(name) }
+                                .font(Typo.font(14, .bold)).foregroundStyle(.black)
+                                .padding(.horizontal, 16).frame(height: 40).background(Capsule().fill(Palette.accent))
+                                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
                 }
                 // Who's in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -192,6 +225,23 @@ struct JamSheet: View {
             .padding(Space.xl)
         }
         .foregroundStyle(Palette.text)
+    }
+
+    private func notice(_ icon: String, _ title: String, _ body: String, action: String?, _ run: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: Space.m) {
+            Icon(name: icon, size: 22).foregroundStyle(Palette.subdued)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(Typo.font(15, .bold))
+                Text(body).font(Typo.font(13)).foregroundStyle(Palette.subdued)
+                if let action {
+                    Button(action, action: run).font(Typo.font(14, .bold)).foregroundStyle(Palette.accent).padding(.top, 2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Space.m)
+        .background(RoundedRectangle(cornerRadius: Radius.l, style: .continuous).fill(Color.white.opacity(0.08)))
+        .accessibilityElement(children: .combine)
     }
 
     private func search() {

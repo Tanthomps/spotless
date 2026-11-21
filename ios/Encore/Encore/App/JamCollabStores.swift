@@ -38,6 +38,10 @@ struct WireSong: Codable, Equatable, Hashable {
     /// The last relay message id seen, so a reconnect (or a relaunch) carries on from there.
     var onCursor: (Int) -> Void = { _ in }
     var lastId = 0
+    /// Connects that failed in a row (reset when a message arrives): 3+ means "can't reach it".
+    private(set) var failures = 0
+    /// Open and answering: set by the first message (the relay's backlog or "ready").
+    private(set) var up = false
     private var task: URLSessionWebSocketTask?
     private var closed = false
     private var ping: Task<Void, Never>?
@@ -85,7 +89,6 @@ struct WireSong: Codable, Equatable, Hashable {
         task = t
         t.resume()
         receive(t)
-        onState(true)
         ping?.cancel()
         ping = Task { [weak self] in
             while !Task.isCancelled {
@@ -108,12 +111,16 @@ struct WireSong: Codable, Equatable, Hashable {
                 guard let self, self.task === t else { return }
                 switch result {
                 case .success(let m):
+                    if !self.up { self.up = true; self.failures = 0; self.onState(true) }
                     if case .string(let s) = m { self.handle(s) }
                     self.receive(t)
                 case .failure:
+                    self.up = false
+                    self.failures += 1
                     self.onState(false)
                     guard !self.closed else { return }
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    // Back off: 2, 4, 6… up to 20 s between tries.
+                    try? await Task.sleep(nanoseconds: UInt64(min(20, 2 * self.failures)) * 1_000_000_000)
                     if !self.closed && self.task === t { self.connect() }
                 }
             }
@@ -130,13 +137,22 @@ struct WireSong: Codable, Equatable, Hashable {
     }
 
     /// Seal and send; `snap` marks a message new members start from (Jam state, playlist snapshot).
-    func send(_ msg: [String: Any], snap: Bool = false) {
-        guard let task, let plain = try? JSONSerialization.data(withJSONObject: msg),
-              let sealed = try? AES.GCM.seal(plain, using: key), let combined = sealed.combined else { return }
+    /// False when the channel isn't open: the caller keeps the change and sends it on reconnect.
+    @discardableResult
+    func send(_ msg: [String: Any], snap: Bool = false) -> Bool {
+        guard up, let task, let plain = try? JSONSerialization.data(withJSONObject: msg),
+              let sealed = try? AES.GCM.seal(plain, using: key), let combined = sealed.combined else { return false }
         let env: [String: Any] = ["from": me, "box": combined.base64EncodedString(), "snap": snap]
-        guard let d = try? JSONSerialization.data(withJSONObject: env), let s = String(data: d, encoding: .utf8) else { return }
-        task.send(.string(s)) { _ in }
+        guard let d = try? JSONSerialization.data(withJSONObject: env), let s = String(data: d, encoding: .utf8) else { return false }
+        task.send(.string(s)) { [weak self] err in
+            // A failed write means the socket is gone: reconnect, and the caller's next push resends.
+            if err != nil { Task { @MainActor in self?.up = false; self?.task?.cancel(); self?.onState(false) } }
+        }
+        return true
     }
+
+    /// Try again now (the "Try again" buttons).
+    func retry() { failures = 0; task?.cancel(); task = nil; connect() }
 
     static func encode<T: Encodable>(_ v: T) -> Any? {
         (try? JSONEncoder().encode(v)).flatMap { try? JSONSerialization.jsonObject(with: $0) }
@@ -178,8 +194,14 @@ enum ShareIdentity {
     private(set) var state: State?
     private(set) var members: [Member] = []
     private(set) var connected = false
+    /// Three or more connects failed in a row: the sheet says so and offers Try again.
+    private(set) var trouble = false
+    /// A guest hasn't heard from the host for 45 s (their app closed, or no signal).
+    private(set) var hostAway = false
     private(set) var link: URL?
     var sheetOpen = false
+    @ObservationIgnored private var lastStateAt = Date()
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
 
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private var channel: ShareChannel?
@@ -190,7 +212,28 @@ enum ShareIdentity {
     init(app: AppModel) { self.app = app }
 
     var active: Bool { role != nil }
-    var myName: String { app?.localUser ?? "Someone" }
+    /// The name others see: the one set for Jams, else the profile name; nil while it's still the
+    /// placeholder "You" (the sheet then asks once, so a Jam isn't a list of "You"s).
+    var savedName: String? {
+        if let n = UserDefaults.standard.string(forKey: "share.name"), !n.isEmpty { return n }
+        if let n = app?.localUser, n != "You", !n.isEmpty { return n }
+        return nil
+    }
+    var myName: String { savedName ?? "Guest" }
+
+    func setName(_ n: String) {
+        let name = String(n.trimmingCharacters(in: .whitespaces).prefix(40))
+        guard !name.isEmpty else { return }
+        UserDefaults.standard.set(name, forKey: "share.name")
+        if role == .host {
+            if let i = members.firstIndex(where: { $0.id == ShareIdentity.me }) { members[i].name = name }
+            publish(force: true)
+        } else if role == .guest {
+            channel?.send(["t": "hello", "id": ShareIdentity.me, "name": name])
+        }
+    }
+
+    func retry() { trouble = false; channel?.retry() }
 
     // host
 
@@ -245,10 +288,14 @@ enum ShareIdentity {
         guard let app else { return }
         switch m["t"] as? String {
         case "hello":
-            if let id = m["id"] as? String, !members.contains(where: { $0.id == id }) {
+            if let id = m["id"] as? String {
                 let name = (m["name"] as? String).map { String($0.prefix(40)) } ?? "Guest"
-                members.append(Member(id: id, name: name))
-                app.showToast("\(name) joined the Jam")
+                if let i = members.firstIndex(where: { $0.id == id }) {
+                    members[i].name = name // a guest set their name
+                } else {
+                    members.append(Member(id: id, name: name))
+                    app.showToast("\(name) joined the Jam")
+                }
             }
             publish(force: true)
         case "bye":
@@ -297,6 +344,20 @@ enum ShareIdentity {
         link = URL(string: "\(ShareRelay.base.absoluteString)/j#\(ch.fragment)&p=\(b64url(hk.x963Representation))")
         ch.send(["t": "hello", "id": ShareIdentity.me, "name": myName])
         sheetOpen = true
+        lastStateAt = Date()
+        // Guests' play/pause and skips (Now Playing, mini player, lock screen) go to the host.
+        app?.player.remote = { [weak self] op in
+            guard let self, self.role == .guest else { return false }
+            self.channel?.send(["t": "cmd", "op": op])
+            return true
+        }
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, self.role == .guest else { return }
+                self.hostAway = Date().timeIntervalSince(self.lastStateAt) > 45 && self.state != nil
+            }
+        }
     }
 
     @ObservationIgnored private var signer: P256.Signing.PrivateKey?
@@ -341,6 +402,7 @@ enum ShareIdentity {
             guard let s = ShareChannel.decode(State.self, m) else { return }
             let first = state == nil
             state = s; members = s.members
+            lastStateAt = Date(); hostAway = false
             follow(s, app: app)
             if first { app.showToast("You joined \(s.host.name)'s Jam") }
         case "end":
@@ -353,11 +415,21 @@ enum ShareIdentity {
     /// Play what the host plays, where the host is: a new song or queue loads it, drift over 2.5 s seeks.
     private func follow(_ s: State, app: AppModel) {
         guard s.items.indices.contains(s.index) else { return }
+        let hook = app.player.remote
+        app.player.remote = nil
+        defer { app.player.remote = hook }
         let want = (s.posMs + (s.playing ? max(0, Date().timeIntervalSince1970 * 1000 - s.at) : 0)) / 1000
         let p = app.player
         if p.current?.videoId != s.items[s.index].videoId {
             p.play(s.items.map(\.song), at: s.index, context: PlayContext(kind: .song, id: nil, title: "\(s.host.name)'s Jam"), startSecs: want)
-            if !s.playing { Task { try? await Task.sleep(nanoseconds: 800_000_000); if !p.paused { p.togglePause() } } }
+            if !s.playing {
+                Task {
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    let h = p.remote; p.remote = nil
+                    if !p.paused { p.togglePause() }
+                    p.remote = h
+                }
+            }
             return
         }
         if abs(p.position - want) > 2.5 { p.seek(want) }
@@ -387,12 +459,22 @@ enum ShareIdentity {
     private func attach(_ ch: ShareChannel, role: Role) {
         channel = ch; self.role = role
         ch.onMessage = { [weak self] m, from in role == .host ? self?.hostHandle(m) : self?.guestHandle(m, from: from) }
-        ch.onState = { [weak self] up in self?.connected = up }
+        ch.onState = { [weak self, weak ch] up in
+            guard let self else { return }
+            self.connected = up
+            self.trouble = !up && (ch?.failures ?? 0) >= 3
+            guard up else { return }
+            // (Re)connected: say hello again (guest) or republish (host), since sends while down were dropped.
+            if self.role == .guest { ch?.send(["t": "hello", "id": ShareIdentity.me, "name": self.myName]) } else { self.publish(force: true) }
+        }
         ch.connect()
     }
 
     private func detach() {
         loop?.cancel(); loop = nil
+        watchdog?.cancel(); watchdog = nil
+        app?.player.remote = nil
+        trouble = false; hostAway = false
         let ch = channel
         Task { try? await Task.sleep(nanoseconds: 500_000_000); ch?.close() }
         channel = nil; role = nil; state = nil; members = []; link = nil; sheetOpen = false; signer = nil; hostKey = nil; lastSeq = 0
@@ -469,7 +551,24 @@ enum ShareIdentity {
             ch.connect()
             await app.library.refresh()
             app.router.dismissOverlays(); app.router.tab = .library; app.router.paths[.library] = [.playlist(pl.id)]
-            app.showToast("You joined \(name)")
+            app.showToast("Joining \(name)…")
+            await waitForSongs(pl.id, name: name)
+        }
+    }
+
+    /// A joined playlist that's still empty after 12 s: the link is old, or no one's shared it yet.
+    private func waitForSongs(_ playlistId: String, name: String) async {
+        guard let app else { return }
+        for _ in 0..<12 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if links[playlistId]?.cursor != nil { app.showToast("You joined \(name)"); return }
+        }
+        guard links[playlistId] != nil else { return }
+        let reachable = channels[playlistId]?.up == true
+        app.showToast(reachable ? "Nothing in \(name) yet. Songs appear as others add them." : "Couldn't load \(name). Check your connection.",
+                      action: reachable ? nil : "Try again") { [weak self] in
+            self?.channels[playlistId]?.retry()
+            Task { await self?.waitForSongs(playlistId, name: name) }
         }
     }
 
@@ -504,6 +603,9 @@ enum ShareIdentity {
         channels[playlistId] = ch
         ch.lastId = links[playlistId]?.cursor ?? 0
         ch.onMessage = { [weak self] m, _ in Task { await self?.apply(m, playlistId) } }
+        ch.onState = { [weak self] up in
+            if up { Task { await self?.push(playlistId) } }
+        }
         ch.onCursor = { [weak self] n in
             guard let self, var l = self.links[playlistId] else { return }
             l.cursor = n; self.links[playlistId] = l; self.save()
@@ -544,13 +646,18 @@ enum ShareIdentity {
         busy.insert(playlistId); defer { busy.remove(playlistId) }
         let channel = l.channel
         guard let page = try? await app.core.getPlaylist(id: playlistId), links[playlistId]?.channel == channel else { return }
-        let now = page.items.map(\.videoId), nowSet = Set(now), known = Set(l.known)
+        let nowSet = Set(page.items.map(\.videoId)), known = Set(l.known)
+        // Only what actually went out counts as shared; the rest goes on the next push
+        // (reconnect, foreground, any library change), so an edit made offline is never lost.
+        var shared = known
         for s in page.items where !known.contains(s.videoId) {
-            if let v = ShareChannel.encode(WireSong(s)) { ch.send(["t": "add", "song": v]) }
+            if let v = ShareChannel.encode(WireSong(s)), ch.send(["t": "add", "song": v]) { shared.insert(s.videoId) }
         }
-        for v in known where !nowSet.contains(v) { ch.send(["t": "remove", "videoId": v]) }
+        for v in known where !nowSet.contains(v) {
+            if ch.send(["t": "remove", "videoId": v]) { shared.remove(v) }
+        }
         guard var cur = links[playlistId], cur.channel == channel else { return }
-        cur.known = now
+        cur.known = page.items.map(\.videoId).filter(shared.contains) + shared.subtracting(nowSet).sorted()
         links[playlistId] = cur; save()
     }
 

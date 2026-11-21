@@ -14,17 +14,24 @@
 	import DevicesIcon from 'phosphor-svelte/lib/DevicesIcon';
 
 	let remotes = $state<RemoteDevice[]>([]);
+	/** Devices a command just went to: "Sending to …" until they answer (or 8 s). */
+	let sending = $state<Record<string, boolean>>({});
 	const active = $derived(remotes.find((r) => r.playing));
 	const show = $derived(!!active && (!playback.now || playback.paused));
 
 	onMount(() => {
 		api.presenceList().then((r) => (remotes = r)).catch(() => {});
-		const un = api.onPresenceChanged((r) => (remotes = r));
+		const un = api.onPresenceChanged((r) => {
+			remotes = r;
+			sending = {};
+		});
 		return () => void un.then((f) => f());
 	});
 
 	function send(d: RemoteDevice, cmd: 'play' | 'pause' | 'next' | 'prev') {
 		if (cmd === 'play' || cmd === 'pause') d.playing = cmd === 'play';
+		sending = { ...sending, [d.dev]: true };
+		setTimeout(() => (sending = { ...sending, [d.dev]: false }), 8000);
 		api.presenceSend(d.dev, cmd).catch(() => {});
 	}
 
@@ -45,7 +52,7 @@
 		<div class="min-w-0 flex-1 leading-tight">
 			<div class="truncate text-[13px] font-bold">{active.song?.title}</div>
 			<div class="flex items-center gap-1 truncate text-[12px] font-medium text-[var(--accent,#1ed760)]">
-				<DevicesIcon size={12} /> Playing on {active.name}
+				<DevicesIcon size={12} /> {sending[active.dev] ? `Sending to ${active.name}…` : `Playing on ${active.name}`}
 			</div>
 		</div>
 		<button class="rounded-full px-3 py-1 text-[12px] font-bold hover:bg-white/10" onclick={() => playHere(active)}>Play here</button>

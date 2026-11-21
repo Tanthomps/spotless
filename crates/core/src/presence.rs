@@ -12,8 +12,12 @@ use crate::state::AppState;
 
 pub const PRESENCE: &str = "presence:";
 pub const REMOTE: &str = "remote:";
-/// A device that hasn't said anything for this long isn't shown.
+/// A paused device that hasn't said anything for this long isn't shown.
 const FRESH_MS: i64 = 15 * 60 * 1000;
+/// A playing device re-announces itself this often, so one that quit or lost its connection
+/// drops off after `PLAYING_GONE_MS` instead of showing "Playing on …" for 15 minutes.
+const HEARTBEAT_MS: i64 = 60 * 1000;
+const PLAYING_GONE_MS: i64 = 150 * 1000;
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -63,7 +67,9 @@ pub fn start(st: &Arc<AppState>) {
             let key = format!("{PRESENCE}{}", engine.device_id());
             match snapshot(&st).await {
                 Some(now) => {
-                    if last.as_ref().is_none_or(|p| changed(p, &now)) {
+                    let beat = now["playing"].as_bool() == Some(true)
+                        && last.as_ref().is_some_and(|p| now["at"].as_i64().unwrap_or(0) - p["at"].as_i64().unwrap_or(0) > HEARTBEAT_MS);
+                    if beat || last.as_ref().is_none_or(|p| changed(p, &now)) {
                         st.db.set_setting(&key, &now.to_string());
                         last = Some(now);
                         idle_sent = false;
@@ -94,7 +100,8 @@ pub fn list(st: &AppState) -> Value {
                 return None;
             }
             let mut p: Value = serde_json::from_str(&v).ok()?;
-            if p["song"].is_null() || now - p["at"].as_i64().unwrap_or(0) > FRESH_MS {
+            let age = now - p["at"].as_i64().unwrap_or(0);
+            if p["song"].is_null() || !shown(p["playing"].as_bool() == Some(true), age) {
                 return None;
             }
             p["dev"] = json!(dev);
@@ -103,6 +110,12 @@ pub fn list(st: &AppState) -> Value {
         .collect();
     out.sort_by_key(|p| -p["at"].as_i64().unwrap_or(0));
     json!(out)
+}
+
+/// Whether a device that last spoke `age_ms` ago still shows: a playing one goes quiet fast (it
+/// heartbeats every minute), a paused one lingers so it can be resumed from here.
+fn shown(playing: bool, age_ms: i64) -> bool {
+    age_ms <= if playing { PLAYING_GONE_MS } else { FRESH_MS }
 }
 
 /// Ask `dev` to `cmd` ("play" | "pause" | "next" | "prev"). Arrives with the next sync round.
@@ -151,6 +164,14 @@ mod tests {
 
     fn p(id: &str, playing: bool, pos: i64, at: i64) -> Value {
         json!({ "song": { "videoId": id }, "playing": playing, "posMs": pos, "at": at })
+    }
+
+    #[test]
+    fn a_silent_playing_device_drops_off_fast_a_paused_one_lingers() {
+        assert!(shown(true, 60_000));
+        assert!(!shown(true, 200_000), "quit while playing: gone in 2.5 min");
+        assert!(shown(false, 10 * 60_000), "paused: still there to resume");
+        assert!(!shown(false, 20 * 60_000));
     }
 
     #[test]

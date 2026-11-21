@@ -96,7 +96,7 @@ struct RootView: View {
         .alert(app.confirm?.title ?? "", isPresented: Binding(get: { app.confirm != nil }, set: { if !$0 { app.confirm = nil } }),
                presenting: app.confirm) { c in
             Button("Cancel", role: .cancel) {}
-            Button(c.action, role: .destructive) { c.run() }
+            Button(c.action, role: c.destructive ? .destructive : nil) { c.run() }
         } message: { c in
             if let m = c.message { Text(m) }
         }
@@ -269,7 +269,9 @@ struct RemoteDeviceBar: View {
                 Text(device.song?.title ?? "").font(Typo.font(13, .bold)).lineLimit(1)
                 HStack(spacing: 4) {
                     Icon(name: "devices", size: 12)
-                    Text("Playing on \(device.name)").font(Typo.font(12, .medium)).lineLimit(1)
+                    Text(app.devices.sending.contains(device.dev) ? "Sending to \(device.name)…" : "Playing on \(device.name)")
+                        .font(Typo.font(12, .medium)).lineLimit(1)
+                        .contentTransition(.opacity)
                 }
                 .foregroundStyle(Palette.accent)
             }
@@ -312,7 +314,8 @@ struct RemoteDeviceSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(live.song?.title ?? "").font(Typo.font(16, .bold)).lineLimit(1)
                     Text(live.song?.artists ?? "").font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(1)
-                    Text("Playing on \(live.name)").font(Typo.font(13, .semibold)).foregroundStyle(Palette.accent).lineLimit(1)
+                    Text(app.devices.sending.contains(live.dev) ? "Sending to \(live.name)…" : "Playing on \(live.name)")
+                        .font(Typo.font(13, .semibold)).foregroundStyle(Palette.accent).lineLimit(1)
                 }
                 Spacer()
             }

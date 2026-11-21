@@ -198,7 +198,10 @@ enum ShareIdentity {
         guard role == nil, let app else { return }
         let ch = ShareChannel.make(me: ShareIdentity.me)
         attach(ch, role: .host)
-        link = URL(string: "\(ShareRelay.base.absoluteString)/j#\(ch.fragment)")
+        // The host signs every state and "end"; the public key rides in the link, so a guest (who
+        // holds the channel key too) can't pose as the host.
+        signer = P256.Signing.PrivateKey()
+        link = URL(string: "\(ShareRelay.base.absoluteString)/j#\(ch.fragment)&p=\(b64url(signer!.publicKey.x963Representation))")
         members = [Member(id: ShareIdentity.me, name: myName)]
         publish(force: true)
         // Publish whenever the queue, the song or play/pause changes, and a heartbeat every 15 s.
@@ -228,7 +231,7 @@ enum ShareIdentity {
         guard force || key != lastSent || jumped || Date().timeIntervalSince(lastSentAt) > 15 else { return }
         lastSent = key; lastSentAt = Date()
         state = s
-        if let v = ShareChannel.encode(s) as? [String: Any] { channel?.send(v.merging(["t": "state"]) { $1 }, snap: true) }
+        if let v = ShareChannel.encode(s) as? [String: Any] { sendSigned(v.merging(["t": "state"]) { $1 }) }
     }
 
     @ObservationIgnored private var lastPos: (pos: Double, at: Date) = (0, .distantPast)
@@ -281,29 +284,50 @@ enum ShareIdentity {
     // guest
 
     func join(fragment: String) {
-        guard let (id, key) = ShareChannel.parse(fragment) else { app?.fail("That Jam link isn't complete."); return }
+        var c = URLComponents(); c.query = fragment
+        var p = c.queryItems?.first { $0.name == "p" }?.value ?? ""
+        p = p.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        p += String(repeating: "=", count: (4 - p.count % 4) % 4)
+        guard let (id, key) = ShareChannel.parse(fragment), let pd = Data(base64Encoded: p),
+              let hk = try? P256.Signing.PublicKey(x963Representation: pd) else { app?.fail("That Jam link isn't complete."); return }
         if role != nil { leave() }
+        hostKey = hk
         let ch = ShareChannel(id: id, keyData: key, me: ShareIdentity.me)
         attach(ch, role: .guest)
-        link = URL(string: "\(ShareRelay.base.absoluteString)/j#\(ch.fragment)")
+        link = URL(string: "\(ShareRelay.base.absoluteString)/j#\(ch.fragment)&p=\(b64url(hk.x963Representation))")
         ch.send(["t": "hello", "id": ShareIdentity.me, "name": myName])
         sheetOpen = true
     }
 
-    /// The host is whoever sent the channel's first state (the backlog starts with it); state and
-    /// "end" from anyone else, another guest pretending, are dropped.
-    @ObservationIgnored private var hostFrom: String?
+    @ObservationIgnored private var signer: P256.Signing.PrivateKey?
+    /// The host's public key, from the invite link.
+    @ObservationIgnored private var hostKey: P256.Signing.PublicKey?
 
-    private func guestHandle(_ m: [String: Any], from: String) {
-        guard let app else { return }
-        let t = m["t"] as? String
-        if t == "state" || t == "end" {
-            if hostFrom == nil, t == "state" { hostFrom = from }
-            guard from == hostFrom else { return }
-        }
-        switch t {
+    private func b64url(_ d: Data) -> String {
+        d.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
+    /// `{t: "signed", body: <JSON text>, sig: <P-256 r‖s, base64>}`.
+    private func sendSigned(_ msg: [String: Any]) {
+        guard let signer, let d = try? JSONSerialization.data(withJSONObject: msg), let body = String(data: d, encoding: .utf8),
+              let sig = try? signer.signature(for: Data(body.utf8)) else { return }
+        channel?.send(["t": "signed", "body": body, "sig": sig.rawRepresentation.base64EncodedString()], snap: msg["t"] as? String == "state")
+    }
+
+    /// Only the host's signed messages carry state or "end"; anything else claiming to is dropped.
+    private func verified(_ m: [String: Any]) -> [String: Any]? {
+        guard m["t"] as? String == "signed", let hostKey, let body = m["body"] as? String,
+              let sigB64 = m["sig"] as? String, let sigData = Data(base64Encoded: sigB64),
+              let sig = try? P256.Signing.ECDSASignature(rawRepresentation: sigData),
+              hostKey.isValidSignature(sig, for: Data(body.utf8)) else { return nil }
+        return try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
+    }
+
+    private func guestHandle(_ raw: [String: Any], from: String) {
+        guard let app, let m = verified(raw) else { return }
+        switch m["t"] as? String {
         case "state":
-            guard let s = ShareChannel.decode(State.self, m), s.host.id == from else { return }
+            guard let s = ShareChannel.decode(State.self, m) else { return }
             let first = state == nil
             state = s; members = s.members
             follow(s, app: app)
@@ -345,7 +369,7 @@ enum ShareIdentity {
     }
 
     func leave() {
-        if role == .host { channel?.send(["t": "end"]) } else { channel?.send(["t": "bye", "id": ShareIdentity.me]) }
+        if role == .host { sendSigned(["t": "end"]) } else { channel?.send(["t": "bye", "id": ShareIdentity.me]) }
         detach()
     }
 
@@ -360,7 +384,7 @@ enum ShareIdentity {
         loop?.cancel(); loop = nil
         let ch = channel
         Task { try? await Task.sleep(nanoseconds: 500_000_000); ch?.close() }
-        channel = nil; role = nil; state = nil; members = []; link = nil; sheetOpen = false; hostFrom = nil
+        channel = nil; role = nil; state = nil; members = []; link = nil; sheetOpen = false; signer = nil; hostKey = nil
     }
 }
 

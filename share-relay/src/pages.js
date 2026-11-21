@@ -82,6 +82,14 @@ $('go').onclick = async () => {
   try { await setup(); connect(); $('join').classList.add('hidden'); $('jam').classList.remove('hidden'); }
   catch (e) { $('err').textContent = e.message; }
 };
+let HOSTKEY = null;
+async function verifyHost(o) {
+  try {
+    if (!HOSTKEY) HOSTKEY = await crypto.subtle.importKey('raw', b64u(q.get('p') || ''), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, HOSTKEY, fromB64(o.sig), new TextEncoder().encode(o.body));
+    return ok ? JSON.parse(o.body) : null;
+  } catch { return null; }
+}
 function connect() {
   ws = new WebSocket(RELAY.replace(/^http/, 'ws') + '/c/' + CH + '/ws?token=' + TOKEN + '&after=' + last);
   ws.onopen = () => send({ t: 'hello', id: me.id, name: me.name, web: true });
@@ -91,9 +99,12 @@ function connect() {
     last = Math.max(last, m.id);
     if (m.from === me.id) return;
     let o; try { o = await open_(m.box); } catch { return; }
-    if (o.t === 'state') render(o);
-    else if (o.t === 'results' && o.rid === rid) results(o.items || []);
-    else if (o.t === 'end') { $('host').textContent = 'The Jam has ended.'; ws.close(); }
+    if (o.t === 'signed') {
+      // State and "end" only count when signed by the host's key from the link.
+      const s = await verifyHost(o); if (!s) return;
+      if (s.t === 'state') render(s);
+      else if (s.t === 'end') { state = { ...(state || {}), ended: true }; $('host').textContent = 'The Jam has ended.'; ws.close(); }
+    } else if (o.t === 'results' && o.rid === rid) results(o.items || []);
   };
   ws.onclose = () => { if (!state || !state.ended) setTimeout(connect, 2000); };
 }

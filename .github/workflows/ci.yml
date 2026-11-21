@@ -6,12 +6,12 @@
 #         #[ignore]d and stay out.
 # Not here on purpose: the Tauri app crate (a full WebKit/Tauri compile, covered by the release
 # build) and the iOS app (Xcode, simulator).
+# CI runs on this Mac now: scripts/ci.sh (same checks, plus the player crate). This workflow stays
+# for a manual run from the Actions tab.
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

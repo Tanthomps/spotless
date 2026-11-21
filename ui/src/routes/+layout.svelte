@@ -14,6 +14,8 @@
 	import { blockForeignDrag, dragScroll } from '$lib/dnd';
 	import { suppressNative } from '$lib/menu';
 	import LinkDialog from '$lib/components/LinkDialog.svelte';
+	import JamDialog from '$lib/share/JamDialog.svelte';
+	import { startCollab } from '$lib/share/collab.svelte';
 	import { handleImportDrop, imp, initImport } from '$lib/import.svelte';
 	import VideoSurface from '$lib/components/VideoSurface.svelte';
 	import { auth, initApp, playback, ui } from '$lib/player.svelte';
@@ -158,6 +160,7 @@
 			};
 		}
 		const teardownWin = initWin();
+		startCollab();
 		checkForUpdatesQuiet();
 		const updateTimer = setInterval(checkForUpdatesQuiet, QUIET_INTERVAL_MS);
 		const teardownApp = initApp();
@@ -346,6 +349,7 @@
 		{/if}
 		{#if mounted.channel}{#await lazyDialogs.channel() then m}<m.default />{/await}{/if}
 		<LinkDialog />
+		<JamDialog />
 		<SignInSheet />
 		{#if mounted.import}{#await lazyDialogs.import() then m}<m.default />{/await}{/if}
 		<AboutRecommendations />

@@ -1366,6 +1366,7 @@ pub fn run() {
             library::lib_playlist_duplicates,
             library::lib_playlist_add,
             library::lib_playlist_remove,
+            library::lib_playlist_remove_videos,
             library::lib_playlist_insert_entries,
             library::lib_playlist_move,
             library::lib_playlist_set_order,

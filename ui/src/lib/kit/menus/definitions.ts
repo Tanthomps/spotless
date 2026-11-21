@@ -28,6 +28,9 @@ import UserPlusIcon from 'phosphor-svelte/lib/UserPlusIcon';
 import UserMinusIcon from 'phosphor-svelte/lib/UserMinusIcon';
 import PlusCircleIcon from 'phosphor-svelte/lib/PlusCircleIcon';
 import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircleIcon';
+import UsersThreeIcon from 'phosphor-svelte/lib/UsersThreeIcon';
+import { inviteCollab, isCollab, leaveCollab } from '$lib/share/collab.svelte';
+import { jam, jamAdd } from '$lib/share/jam.svelte';
 import XIcon from 'phosphor-svelte/lib/XIcon';
 import IdentificationCardIcon from 'phosphor-svelte/lib/IdentificationCardIcon'; // lane magic-d1
 import UserCircleMinusIcon from 'phosphor-svelte/lib/UserCircleMinusIcon'; // lane magic-d1
@@ -88,6 +91,7 @@ export function trackMenu(songs: SongItem[], ctx: TrackMenuContext = {}): MenuEn
 	};
 	const queue: MenuEntry[] = [
 		{ label: 'Add to queue', icon: QueueIcon, onSelect: () => A.addToQueue(songs) },
+		...(jam.role === 'guest' ? [{ label: 'Add to Jam', icon: UsersThreeIcon, onSelect: () => jamAdd(songs) }] : []),
 		{ label: 'Play next', icon: ArrowBendDownRightIcon, onSelect: () => A.playNext(songs) }
 	];
 	const removeFromQueue: MenuEntry | false = ctx.queueIndex !== undefined && {
@@ -350,6 +354,13 @@ export function playlistMenu(item: BrowseItem, ctx: ItemMenuContext = {}): MenuE
 		downloadEntry(item, liked ? 'liked' : 'playlist'),
 		own && { label: 'Edit details', icon: PencilSimpleIcon, onSelect: () => A.editPlaylistDetails(item) },
 		own && { label: 'Delete', icon: TrashIcon, onSelect: () => A.deletePlaylist(item) },
+		own &&
+			api.isLocalPlaylist(item.id) && {
+				label: isCollab(item.id) ? 'Copy invite link' : 'Invite collaborators',
+				icon: UserPlusIcon,
+				onSelect: () => inviteCollab(item.id, item.title)
+			},
+		isCollab(item.id) && { label: 'Stop collaborating', icon: UserMinusIcon, onSelect: () => leaveCollab(item.id) },
 		sep,
 		ctx.sidebar && { label: 'Create playlist', icon: MusicNotesPlusIcon, onSelect: () => A.createPlaylist() },
 		ctx.sidebar && { label: 'Create folder', icon: FolderSimplePlusIcon, onSelect: () => A.createFolder() },

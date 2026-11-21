@@ -50,11 +50,11 @@ struct CreateMenuOverlay: View {
                 Icon(name: icon, size: 26).frame(width: 52, height: 52).background(Circle().fill(Color.white.opacity(0.1)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(Typo.font(17, .bold))
-                    Text(sub).font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(1)
+                    Text(sub).font(Typo.font(14)).foregroundStyle(Palette.subdued).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, Space.l).frame(height: 70).contentShape(Rectangle())
+            .padding(.horizontal, Space.l).padding(.vertical, Space.s).frame(minHeight: 70).contentShape(Rectangle())
         }
         .buttonStyle(SettingsPressStyle())
         .foregroundStyle(Palette.text)
@@ -71,6 +71,7 @@ struct JamPill: View {
             HStack(spacing: 6) {
                 Icon(name: "users-three", size: 14)
                 Text(jam.role == .host ? "Your Jam" : "\(jam.state?.host.name ?? "Someone")'s Jam").font(Typo.font(13, .bold))
+                    .lineLimit(1).truncationMode(.tail).frame(maxWidth: 180, alignment: .leading).fixedSize(horizontal: true, vertical: false)
                 if jam.trouble {
                     Text("· Can't connect").font(Typo.font(13))
                 } else if jam.hostAway {
@@ -105,6 +106,7 @@ struct JamSheet: View {
             VStack(alignment: .leading, spacing: Space.l) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(jam.role == .host ? "Your Jam" : "\(jam.state?.host.name ?? "Someone")'s Jam").font(Typo.font(24, .bold))
+                        .lineLimit(2).minimumScaleFactor(0.8)
                     Text(jam.connected ? "Everyone hears the same queue." : jam.trouble ? "Can't reach the Jam." : "Connecting…")
                         .font(Typo.font(14)).foregroundStyle(Palette.subdued)
                 }
@@ -123,6 +125,7 @@ struct JamSheet: View {
                             TextField("", text: $name, prompt: Text("Your name").foregroundStyle(Color(hex: "#535353")))
                                 .font(Typo.font(15, .medium)).foregroundStyle(.black).submitLabel(.done)
                                 .onSubmit { jam.setName(name) }
+                                .onChange(of: name) { _, n in if n.count > 40 { name = String(n.prefix(40)) } }
                                 .padding(.horizontal, Space.m).frame(height: 40)
                                 .background(RoundedRectangle(cornerRadius: Radius.m, style: .continuous).fill(.white))
                                 .accessibilityIdentifier("jam-name")
@@ -137,7 +140,8 @@ struct JamSheet: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Space.s) {
                         ForEach(jam.members, id: \.id) { m in
-                            Text(m.name).font(Typo.font(13, .semibold)).padding(.horizontal, 12).frame(height: 30).glassCapsule()
+                            Text(m.name).font(Typo.font(13, .semibold)).lineLimit(1).truncationMode(.tail)
+                                .frame(maxWidth: 160).padding(.horizontal, 12).frame(minHeight: 30).glassCapsule()
                         }
                     }
                 }
@@ -245,8 +249,8 @@ struct JamSheet: View {
     }
 
     private func search() {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return }
+        let q = String(query.trimmingCharacters(in: .whitespaces).prefix(100))
+        guard !q.isEmpty, !searching else { return }
         searching = true
         Task {
             results = (try? await app.core.search(query: q)).map { Array($0.prefix(12)) } ?? []

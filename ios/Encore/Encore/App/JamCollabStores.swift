@@ -284,11 +284,12 @@ enum ShareIdentity {
         return abs(s.posMs - predicted) > 3000 && lastPos.at != .distantPast
     }
 
-    private func hostHandle(_ m: [String: Any]) {
+    private func hostHandle(_ m: [String: Any], from: String) {
         guard let app else { return }
         switch m["t"] as? String {
         case "hello":
-            if let id = m["id"] as? String {
+            // Only for the sender's own entry, and never the host's.
+            if let id = m["id"] as? String, id == from, id != ShareIdentity.me {
                 let name = (m["name"] as? String).map { String($0.prefix(40)) } ?? "Guest"
                 if let i = members.firstIndex(where: { $0.id == id }) {
                     members[i].name = name // a guest set their name
@@ -299,7 +300,8 @@ enum ShareIdentity {
             }
             publish(force: true)
         case "bye":
-            members.removeAll { $0.id == m["id"] as? String }
+            guard let id = m["id"] as? String, id == from, id != ShareIdentity.me else { return }
+            members.removeAll { $0.id == id }
             publish(force: true)
         case "add":
             if let s = ShareChannel.decode(WireSong.self, m["song"]) { _ = app.player.addToQueue([s.song]) }
@@ -458,7 +460,7 @@ enum ShareIdentity {
 
     private func attach(_ ch: ShareChannel, role: Role) {
         channel = ch; self.role = role
-        ch.onMessage = { [weak self] m, from in role == .host ? self?.hostHandle(m) : self?.guestHandle(m, from: from) }
+        ch.onMessage = { [weak self] m, from in role == .host ? self?.hostHandle(m, from: from) : self?.guestHandle(m, from: from) }
         ch.onState = { [weak self, weak ch] up in
             guard let self else { return }
             self.connected = up

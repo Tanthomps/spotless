@@ -166,9 +166,19 @@ export function trackMenu(songs: SongItem[], ctx: TrackMenuContext = {}): MenuEn
 		goAlbum,
 		!local && { label: 'Show credits', icon: IdentificationCardIcon, onSelect: () => A.showCredits(song) },
 		sep,
-		!local && shareSub({ kind: 'song', id: song.video_id }, 'Copy song link')
+		!local && {
+			type: 'sub',
+			label: 'Share',
+			icon: ShareFatIcon,
+			width: 220,
+			items: [
+				{ label: 'Copy song link', icon: LinkIcon, onSelect: () => A.copyLink({ kind: 'song', id: song.video_id }) },
+				{ label: 'Download (.m4a)', icon: ArrowCircleDownIcon, onSelect: () => A.exportSong(song) }
+			]
+		}
 	]);
 }
+
 
 /**
  * The accent "liked" check (track rows, player bar): Spotify opens the "Saved in" picker instead

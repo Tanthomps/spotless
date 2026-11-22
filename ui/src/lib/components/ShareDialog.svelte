@@ -18,6 +18,7 @@
 	import { playback, ui, toast } from '$lib/player.svelte';
 	import { windowCorners } from '$lib/win.svelte';
 	import { t } from '$lib/i18n.svelte';
+	import { exportSong } from '$lib/kit/actions';
 
 	// Playlist browseIds carry a `VL` prefix that the watch/playlist URLs don't take.
 	function shareUrl(item: BrowseItem, start?: number | null): string {
@@ -208,6 +209,15 @@
 					{copied ? t('common.done') : t('dialogs.share.copy_link')}
 				</button>
 			</div>
+
+			{#if ui.share.kind === 'song' && !api.isLocalId(ui.share.id)}
+				<button
+					class="mt-3 flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-md border text-sm transition-colors hover:bg-accent/10"
+					onclick={() => { const s = ui.share!; void exportSong({ video_id: s.id, title: s.title, artists: s.subtitle ?? '', thumbnail: s.thumbnail } as api.SongItem); }}
+				>
+					Download (.m4a)
+				</button>
+			{/if}
 
 			{#if canStartAt}
 				<!-- YouTube's own share sheet: a checkbox, then the time as part of the sentence, an

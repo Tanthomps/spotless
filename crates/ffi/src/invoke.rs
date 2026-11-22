@@ -398,6 +398,7 @@ pub(crate) async fn dispatch(st: &Arc<AppState>, cmd: &str, a: Args) -> Result<V
 
         // ── downloads ──
         "downloads_snapshot" => ok(dl()?.snapshot()),
+        "song_export" => ok(encore_core::downloads::fetch::export_aac(st, &a.get::<String>("videoId")?, std::path::Path::new(&a.get::<String>("path")?)).await?),
         "downloads_add" => ok(dl()?.add(a.get("collection")?, a.get("songs")?).await?),
         "downloads_remove" => {
             dl()?.remove(&a.get::<String>("id")?);

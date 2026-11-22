@@ -35,6 +35,7 @@ import type { RadioKind } from '$lib/trackapi';
 import { copyText } from '$lib/clipboard';
 import { lib } from '$lib/library.svelte';
 import { toast, toastUndo } from './toast';
+import { save as pickSave } from '@tauri-apps/plugin-dialog';
 
 export { playback };
 
@@ -448,3 +449,18 @@ export const showHref = (id: string) => `/show/${encodeURIComponent(id)}`;
 export const YOUR_EPISODES_HREF = '/collection/episodes';
 /** "Local Files" (sidebar row). The local-music page stream may move it to its own route. */
 export const LOCAL_FILES_HREF = '/collection/local-files';
+
+/** Share › Download: "Artist - Title.m4a" wherever the save panel says, for a video edit. */
+export async function exportSong(song: SongItem) {
+	const clean = (s: string) => s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
+	const name = clean([song.artists, song.title].filter(Boolean).join(' - ')).slice(0, 150) || 'Song';
+	const path = await pickSave({ title: 'Save song', defaultPath: `${name}.m4a`, filters: [{ name: 'M4A audio', extensions: ['m4a'] }] }).catch(() => null);
+	if (!path) return;
+	toast(`Saving ${song.title}…`);
+	try {
+		await api.songExport(song.video_id, path);
+		toast.success(`Saved ${song.title}`, { action: { label: 'Show in Finder', onClick: () => api.revealInFinder(path).catch(() => {}) } });
+	} catch (e) {
+		toast.fail(e, `Couldn't save ${song.title}`, { detail: true });
+	}
+}

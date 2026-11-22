@@ -12,6 +12,9 @@ extension RealCoreClient {
         _ = try await call("lib_playlist_remove_videos", ["id": id, "videoIds": videoIds])
     }
     func song(videoId: String) async throws -> SongItem { try await call("song", ["videoId": videoId]) }
+    func exportSong(videoId: String, to path: String) async throws {
+        _ = try await call("song_export", ["videoId": videoId, "path": path])
+    }
     func downloadedSongs(collectionId: String) async throws -> [SongItem] {
         try await call("downloads_collection_songs", ["id": collectionId])
     }
@@ -39,6 +42,9 @@ extension MockCoreClient {
             playlists[i].meta.updatedAt = Date().timeIntervalSince1970
         }
         emit("library-changed", ["scope": "playlists"])
+    }
+    func exportSong(videoId: String, to path: String) async throws {
+        try Data("demo".utf8).write(to: URL(fileURLWithPath: path))
     }
     func song(videoId: String) async throws -> SongItem {
         if let s = withLock({ pool.first { $0.videoId == videoId } }) { return s }

@@ -106,6 +106,12 @@ pub async fn downloads_set_dir(path: String) -> Result<serde_json::Value, String
     Ok(m.snapshot())
 }
 
+/// Share › Download: the song as an .m4a at `path` (a save-panel pick), apart from offline downloads.
+#[tauri::command]
+pub async fn song_export(state: St<'_>, video_id: String, path: String) -> Result<(), String> {
+    super::fetch::export_aac(&state, &video_id, std::path::Path::new(&path)).await
+}
+
 /// Every downloaded song, newest first.
 #[tauri::command]
 pub async fn downloads_songs(state: St<'_>) -> Result<Vec<SongItem>, String> {

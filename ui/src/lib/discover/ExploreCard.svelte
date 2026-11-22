@@ -26,6 +26,7 @@
 <Card
 	title={item.title}
 	subtitle={subtitle ?? ((item.subtitle && cardSubtitle(item.kind, item.subtitle)) || fallback[item.kind])}
+	artists={item.kind === 'song' && !subtitle ? (item as BrowseItem).artistRuns : undefined}
 	image={item.thumbnail}
 	kind={item.kind}
 	{href}

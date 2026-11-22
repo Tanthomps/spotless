@@ -291,6 +291,7 @@
 		<Card
 			title={i.title}
 			subtitle={i.subtitle}
+			artists={i.artistRuns}
 			image={i.thumbnail}
 			kind="song"
 			onclick={() => playVideo(i)}

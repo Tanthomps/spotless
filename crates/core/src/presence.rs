@@ -168,17 +168,22 @@ pub async fn applied(st: &Arc<AppState>, keys: &[String]) {
 
 /// Run a remote command once (it can come by socket and again by sync), and only a recent one.
 async fn run(st: &Arc<AppState>, v: &Value) {
-    static DONE: Mutex<Option<String>> = Mutex::new(None);
+    // Every id seen in the freshness window, not just the last: a replayed box (by sync or the
+    // relay) within that minute is refused too.
+    static DONE: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
     let id = v["id"].as_str().unwrap_or_default().to_string();
-    if id.is_empty() || now_ms() - v["at"].as_i64().unwrap_or(0) > 60_000 {
+    let now = now_ms();
+    if id.is_empty() || (now - v["at"].as_i64().unwrap_or(0)).abs() > 60_000 {
         return;
     }
     {
         let mut done = DONE.lock().unwrap();
-        if done.as_deref() == Some(id.as_str()) || st.db.get_setting("remote_done").as_deref() == Some(id.as_str()) {
+        let done = done.get_or_insert_with(HashMap::new);
+        done.retain(|_, t| now - *t <= 120_000);
+        if done.contains_key(&id) || st.db.get_setting("remote_done").as_deref() == Some(id.as_str()) {
             return;
         }
-        *done = Some(id.clone());
+        done.insert(id.clone(), now);
     }
     st.db.set_setting("remote_done", &id);
     match v["cmd"].as_str() {
@@ -256,9 +261,14 @@ mod live {
                 }
                 UP.store(false, Ordering::Relaxed);
                 *OUT.lock().unwrap() = None;
+                *SEEN.lock().unwrap() = None;
                 tokio::time::sleep(std::time::Duration::from_secs((2 * fails).clamp(1, 30))).await;
             }
         });
+    }
+
+    fn same_group(gkey: &[u8]) -> bool {
+        crate::sync::engine().and_then(|e| e.group()).is_some_and(|g| g.key == gkey)
     }
 
     async fn session(st: &Arc<AppState>, me: &str, gkey: &[u8]) -> Result<(), String> {
@@ -273,7 +283,8 @@ mod live {
         *OUT.lock().unwrap() = Some(tx.clone());
         UP.store(true, Ordering::Relaxed);
         let _ = tx.send(json!({ "t": "hello" }));
-        let mut ping = tokio::time::interval(std::time::Duration::from_secs(20));
+        let mut ping = tokio::time::interval(std::time::Duration::from_secs(5));
+        let mut keepalive = 0u32;
         loop {
             tokio::select! {
                 out = rx.recv() => {
@@ -282,7 +293,13 @@ mod live {
                     sink.send(Message::text(frame.to_string())).await.map_err(|e| e.to_string())?;
                 }
                 _ = ping.tick() => {
-                    sink.send(Message::text(r#"{"type":"ping"}"#)).await.map_err(|e| e.to_string())?;
+                    if !same_group(gkey) {
+                        return Ok(()); // unlinked or re-paired: drop this channel now
+                    }
+                    keepalive += 1;
+                    if keepalive % 4 == 0 {
+                        sink.send(Message::text(r#"{"type":"ping"}"#)).await.map_err(|e| e.to_string())?;
+                    }
                 }
                 frame = stream.next() => {
                     let Some(frame) = frame else { return Ok(()) };
@@ -293,6 +310,9 @@ mod live {
                     }
                     let Some(plain) = o["box"].as_str().and_then(|b| boxkey.open(&id, b)) else { continue };
                     let Ok(m) = serde_json::from_slice::<Value>(&plain) else { continue };
+                    if !same_group(gkey) {
+                        return Ok(());
+                    }
                     handle(st, me, &m, &tx).await;
                 }
             }

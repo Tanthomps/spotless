@@ -7,18 +7,13 @@ import SwiftUI
 /// on Made for you pages and the corner of generated covers; `size` is the disc's diameter.
 /// `SpotlessGlyph` is the master's note in its 100 box; the `gen-brand` lines are rewritten by
 /// scripts/brand/gen-brand.py ship.
+/// The app icon, small: black tile, green mark (badges on Made for you covers and pages).
 struct SpotlessMark: View {
     var size: CGFloat = 24
-    static let disc = Color(hex: "#1ED760") // gen-brand
-    static let ink = Color(hex: "#000000") // gen-brand
-    static let discShare: CGFloat = 0.8 // gen-brand
     var body: some View {
-        Circle().fill(Self.disc)
+        RoundedRectangle(cornerRadius: size * 0.224, style: .continuous).fill(.black)
             .frame(width: size, height: size)
-            .overlay(
-                Image("SpotlessGlyph").resizable().renderingMode(.template).foregroundStyle(Self.ink)
-                    .frame(width: size / Self.discShare, height: size / Self.discShare)
-            )
+            .overlay(Image("SpotlessGlyph").resizable().renderingMode(.template).foregroundStyle(Color(hex: "#1ED760")))
             .accessibilityHidden(true)
     }
 }

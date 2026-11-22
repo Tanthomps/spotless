@@ -53,7 +53,8 @@ const MAX_DAILY: usize = 6;
 ///     with three bars.
 /// 5 = one layout for every playlist (artwork or band, mark, name) in Spotless colours, under the
 ///     current names (`title`).
-pub const COVER_VERSION: u32 = 5;
+/// 6 = the app icon (black tile, green mark) in place of the old disc and note.
+pub const COVER_VERSION: u32 = 6;
 
 pub fn is_mfy(id: &str) -> bool {
     id.starts_with(PREFIX)
@@ -941,7 +942,7 @@ const BANDS: [&str; 10] = [
 
 /// Our mark, top-left on every cover: the disc and note of the Spotless master
 /// (assets/brand/spotless.svg), 48 px. The next line is rewritten by scripts/brand/gen-brand.py ship.
-const SPOTLESS_MARK: &str = r##"<g transform="translate(22.00 22.00) scale(0.6000)"><circle cx="50" cy="50" r="40" fill="#FF2D7A"/><path fill="#000000" d="M43.70 62.08A9.520 6.944 -22.0 0 1 37.48 72.09A9.520 6.944 -22.0 0 1 26.05 69.22A9.520 6.944 -22.0 0 1 32.27 59.21A9.520 6.944 -22.0 0 1 43.70 62.08ZM66.66 55.92A9.520 6.944 -22.0 0 1 60.44 65.93A9.520 6.944 -22.0 0 1 49.01 63.06A9.520 6.944 -22.0 0 1 55.23 53.05A9.520 6.944 -22.0 0 1 66.66 55.92ZM39.71 32.61L44.08 32.61L44.08 64.05L39.71 64.72ZM62.67 26.45L67.04 26.45L67.04 57.89L62.67 58.56ZM39.71 28.13L67.04 20.80L67.04 29.76L39.71 37.09Z"/></g>"##; // gen-brand
+const SPOTLESS_MARK: &str = r##"<g transform="translate(28 28) scale(0.03828)"><rect width="1254" height="1254" rx="281" fill="#000000"/><path fill="#1ED760" d="M400 431.22L400 449.02A33.5 33.5 0 0 0 429.38 482.26A417.4 417.4 0 0 1 747.31 701.81A28.5 28.5 0 0 0 786.77 713.2L812.09 698.58A81.5 81.5 0 0 0 812.09 557.42L496.75 375.36A64.5 64.5 0 0 0 400 431.22ZM400 560.38L400 594.41A33.5 33.5 0 0 0 429.77 627.7A290.2 290.2 0 0 1 644.34 763.51A28.5 28.5 0 0 0 682.84 773.2L701.93 762.18A28.5 28.5 0 0 0 712.65 723.76A391.1 391.1 0 0 0 439.45 527.42A33.5 33.5 0 0 0 400 560.38ZM400 706.48L400 816.99A69 69 0 0 0 503.5 876.74L595.33 823.73A28.5 28.5 0 0 0 605.24 783.94A241.8 241.8 0 0 0 438.86 673.41A33.5 33.5 0 0 0 400 706.48Z"/></g>"##; // the app icon, small
 
 fn glyph(c: char) -> (u16, &'static str) {
     GLYPHS.iter().find(|g| g.0 == c).map(|g| (g.1, g.2)).unwrap_or((234, ""))

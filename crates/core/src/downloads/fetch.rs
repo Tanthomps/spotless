@@ -382,6 +382,13 @@ pub async fn export_aac(state: &Arc<AppState>, video_id: &str, dest: &Path) -> R
     if crate::podcasts::is_rss_id(video_id) || crate::local::is_local_song(video_id) {
         return Err("Only songs from YouTube Music can be saved this way".into());
     }
+    // `dest` comes from the UI (a save panel): only ever a new or replaced .m4a in a real folder.
+    let is_m4a = dest.extension().is_some_and(|e| e.eq_ignore_ascii_case("m4a"));
+    let parent_ok = dest.parent().is_some_and(|p| p.is_dir());
+    let is_link = std::fs::symlink_metadata(dest).is_ok_and(|m| m.file_type().is_symlink());
+    if !dest.is_absolute() || !is_m4a || !parent_ok || is_link {
+        return Err("Pick a folder and an .m4a file name to save to".into());
+    }
     let aac = |state: &Arc<AppState>| {
         let state = state.clone();
         let id = video_id.to_owned();

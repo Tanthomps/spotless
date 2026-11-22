@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Spotless brand mark: ONE master SVG, every icon and logo generated from it (stdlib + macOS).
+"""RETIRED (2026-11): the mark is now site/assets/spotless.svg (play triangle, green), and covers
+draw the app icon small. `ship` would bring back the old pink note; don't run it.
+
+Spotless brand mark: ONE master SVG, every icon and logo generated from it (stdlib + macOS).
 
     python3 scripts/brand/final.py master      # construct the mark -> assets/brand/spotless.svg
     python3 scripts/brand/gen-brand.py ship    # master -> every app target

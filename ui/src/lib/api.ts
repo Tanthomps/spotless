@@ -2257,3 +2257,7 @@ export const onSyncChanged = (
 	cb: (p: { status: SyncStatus; entities: string[] }) => void
 ): Promise<UnlistenFn> =>
 	listen<{ status: SyncStatus; entities: string[] }>('sync-changed', (e) => cb(e.payload));
+
+/** Remove songs from a playlist on this machine by video id (collaborative playlists). */
+export const libPlaylistRemoveVideos = (id: string, videoIds: string[]) =>
+	invoke<unknown>('lib_playlist_remove_videos', { id, videoIds });

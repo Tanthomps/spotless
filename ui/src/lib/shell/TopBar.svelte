@@ -42,6 +42,7 @@
 	import UserCircleIcon from 'phosphor-svelte/lib/UserCircleIcon';
 	import { searchFocus } from './search.svelte';
 	import { openProfileMenu } from '$lib/settings/profileMenu';
+	import { profilePhoto } from '$lib/profilePhoto.svelte';
 	// ── stream: smart2 ── What's New bell (shell-layout.md: 32px, #b3b3b3 → white, 8px gaps).
 	import BellIcon from 'phosphor-svelte/lib/BellIcon';
 	import { bell, initBell } from '$lib/smart/bell.svelte';
@@ -708,10 +709,12 @@
 					class="grid size-12 place-items-center rounded-full bg-bg-highlight transition-transform hover:scale-[1.04]"
 					onclick={avatarMenu}
 				>
-					{#if account?.signedIn && account.thumbnail}
+					{#if profilePhoto.url}
+						<img src={profilePhoto.url} alt="" class="size-8 rounded-full object-cover" />
+					{:else if account?.signedIn && account.thumbnail}
 						<img src={thumb(account.thumbnail, 64)} alt="" class="size-8 rounded-full object-cover" />
 					{:else if account?.signedIn}
-						<span class="grid size-8 place-items-center rounded-full bg-[#f573a0] text-sm font-bold text-black">{initial}</span>
+						<span class="grid size-8 place-items-center rounded-full bg-accent text-sm font-bold text-black">{initial}</span>
 					{:else}
 						<Icon icon={UserCircleIcon} size={32} class="text-text-subdued" />
 					{/if}

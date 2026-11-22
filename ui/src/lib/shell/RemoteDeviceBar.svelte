@@ -38,7 +38,7 @@
 	async function playHere(d: RemoteDevice) {
 		if (!d.song) return;
 		const elapsed = d.playing ? Math.max(0, Date.now() - (d.at ?? 0)) : 0;
-		const song = { videoId: d.song.videoId, title: d.song.title, artists: d.song.artists, thumbnail: d.song.thumbnail ?? null } as api.SongItem;
+		const song = { video_id: d.song.videoId, title: d.song.title, artists: d.song.artists, thumbnail: d.song.thumbnail ?? undefined } as api.SongItem;
 		await api.playPlaylist([song], 0);
 		// ponytail: seeks once the stream opens (~1 s); a resolve slower than that starts from the top.
 		setTimeout(() => api.seek(((d.posMs ?? 0) + elapsed + 1200) / 1000).catch(() => {}), 1200);

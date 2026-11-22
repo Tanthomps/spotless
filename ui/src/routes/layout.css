@@ -92,15 +92,15 @@
 	--color-on-accent: #000000;
 
 	/* ---------- Colour: accent & status ---------- */
-	/* Spotless brand pink (scripts/brand/final.py PINK) — the ONE accent; everything else references
+	/* Spotify green (#1ED760, matching the iPhone app) — the ONE accent; everything else references
 	   these. Hover = 12% toward white, press = 12% toward black. Black text sits on it (≈5.9:1;
 	   white would be ≈3.6:1). As text on #121212 the base is ≈5.3:1, but on raised surfaces
 	   (#1f1f1f/#282828) it drops toward 4:1, so words in the accent use --color-accent-text. */
-	--color-accent: #ff2d7a;
-	--color-accent-hover: #ff468a;
-	--color-accent-press: #e0286b;
-	--color-accent-text: #ff4f8f;
-	--color-accent-tile: #5a0e30;
+	--color-accent: #1ed760;
+	--color-accent-hover: #39dc73;
+	--color-accent-press: #1abd54;
+	--color-accent-text: #1ed760;
+	--color-accent-tile: #0b5a2a;
 	--color-negative: #ed2c3f;
 	--color-warning: #ffa42b;
 	--color-announcement: #1278f2;
@@ -817,13 +817,29 @@ input[type='range'].range:focus-visible::-webkit-slider-thumb {
 	}
 }
 
-/* Menus (kit/menus): #282828, radius 4, padding 4, menu shadow, scrolls past viewport-24. */
+/* Frosted glass, as on the iPhone app's sheets: what's behind shows faintly through the blur and
+   the edge carries a lit hairline that fades down. Menus, dialogs, tooltips and the queue panel. */
+.glass {
+	background: rgb(30 30 30 / 0.68);
+	-webkit-backdrop-filter: blur(28px) saturate(1.5);
+	backdrop-filter: blur(28px) saturate(1.5);
+	border: 1px solid rgb(255 255 255 / 0.07);
+	box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), var(--shadow-menu);
+}
+@media (prefers-reduced-transparency: reduce) {
+	.glass { background: var(--color-bg-menu); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* Menus (kit/menus): frosted, radius 6, padding 4, scrolls past viewport-24. */
 .menu-surface {
 	z-index: 1060;
-	background: var(--color-bg-menu);
-	border-radius: 4px;
+	background: rgb(30 30 30 / 0.68);
+	-webkit-backdrop-filter: blur(28px) saturate(1.5);
+	backdrop-filter: blur(28px) saturate(1.5);
+	border: 1px solid rgb(255 255 255 / 0.07);
+	border-radius: 6px;
 	padding: 4px;
-	box-shadow: var(--shadow-menu);
+	box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), var(--shadow-menu);
 	max-height: calc(100vh - 24px);
 	overflow-y: auto;
 	outline: none;

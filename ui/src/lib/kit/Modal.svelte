@@ -64,7 +64,7 @@
 				(field ?? panel)?.focus({ preventScroll: true });
 			}}
 			tabindex={-1}
-			class="fixed top-1/2 left-1/2 z-[1050] flex max-h-[calc(100vh-48px)] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg bg-bg-menu p-6 text-white shadow-modal outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.98] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 {panelClass}"
+			class="fixed top-1/2 left-1/2 z-[1050] flex max-h-[calc(100vh-48px)] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl glass p-6 text-white shadow-modal outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.98] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 {panelClass}"
 			style="width:{width}px"
 		>
 			{#if title || closeButton}

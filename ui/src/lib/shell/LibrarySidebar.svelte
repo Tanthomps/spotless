@@ -58,6 +58,10 @@
 	import PlayIcon from 'phosphor-svelte/lib/PlayIcon';
 	import MusicNotesPlusIcon from 'phosphor-svelte/lib/MusicNotesPlusIcon';
 	import FolderSimplePlusIcon from 'phosphor-svelte/lib/FolderSimplePlusIcon';
+	import UsersThreeIcon from 'phosphor-svelte/lib/UsersThreeIcon';
+	import HeadphonesIcon from 'phosphor-svelte/lib/HeadphonesIcon';
+	import { inviteCollab } from '$lib/share/collab.svelte';
+	import { startJam } from '$lib/share/jam.svelte';
 
 	let { mode = 'sidebar' }: { mode?: 'sidebar' | 'page' } = $props();
 
@@ -308,9 +312,11 @@
 {#snippet createItems(close: () => void)}
 	{#each [
 		{ icon: MusicNotesPlusIcon, title: 'Playlist', desc: 'Create a playlist with songs or episodes', run: () => createPlaylist([], true, libraryUi.folderPath.at(-1)) },
+		{ icon: UsersThreeIcon, title: 'Collaborative playlist', desc: 'Invite friends and build a playlist together', run: async () => { const p = await createPlaylist([], true, libraryUi.folderPath.at(-1)); if (p) await inviteCollab(p.id, p.title); } },
+		{ icon: HeadphonesIcon, title: 'Jam', desc: 'Listen together, anywhere', run: () => startJam() },
 		{ icon: FolderSimplePlusIcon, title: 'Folder', desc: 'Organize your playlists', run: () => createFolder(libraryUi.folderPath.at(-1)) }
 	] as it, i (i)}
-		{#if i === 1}<div class="my-1 h-px bg-white/10"></div>{/if}
+		{#if i === 3}<div class="my-1 h-px bg-white/10"></div>{/if}
 		<button
 			type="button"
 			role="menuitem"

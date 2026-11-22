@@ -84,6 +84,9 @@ fn app_link(url: &tauri::Url) -> Option<String> {
         "album" => Some(format!("https://music.youtube.com/browse/{}", id?)),
         // A device-linking QR: the page joins with it as is (`sync_join { qr }`).
         "pair" => Some(format!("spotless://pair?{}", url.query()?)),
+        // Jam and collaborative-playlist invites: the page asks, then joins (lib/share).
+        "jam" => Some(format!("spotless://jam?{}", url.query()?)),
+        "collab" => Some(format!("spotless://collab?{}", url.query()?)),
         "artist" => Some(format!("https://music.youtube.com/channel/{}", id?)),
         "open" => {
             let target =

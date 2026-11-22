@@ -86,8 +86,8 @@ const GLYPHS: Record<string, [number, string]> = {
 };
 
 const BANDS = ['#3b3f8f', '#7a3b69', '#2f6f73', '#8a5a2b', '#4b6b3a', '#5a4a8a', '#8c3f3f', '#2f5d8a', '#6b5b3e', '#3f6f5a'];
-// The Spotless mark, as mfy.rs SPOTLESS_MARK draws it (rewritten by scripts/brand/gen-brand.py ship).
-const MARK = '<g transform="translate(22.00 22.00) scale(0.6000)"><circle cx="50" cy="50" r="40" fill="#FF2D7A"/><path fill="#000000" d="M43.70 62.08A9.520 6.944 -22.0 0 1 37.48 72.09A9.520 6.944 -22.0 0 1 26.05 69.22A9.520 6.944 -22.0 0 1 32.27 59.21A9.520 6.944 -22.0 0 1 43.70 62.08ZM66.66 55.92A9.520 6.944 -22.0 0 1 60.44 65.93A9.520 6.944 -22.0 0 1 49.01 63.06A9.520 6.944 -22.0 0 1 55.23 53.05A9.520 6.944 -22.0 0 1 66.66 55.92ZM39.71 32.61L44.08 32.61L44.08 64.05L39.71 64.72ZM62.67 26.45L67.04 26.45L67.04 57.89L62.67 58.56ZM39.71 28.13L67.04 20.80L67.04 29.76L39.71 37.09Z"/></g>'; // gen-brand
+// The Spotless mark, as mfy.rs SPOTLESS_MARK draws it (the app icon, small).
+const MARK = '<g transform="translate(28 28) scale(0.03828)"><rect width="1254" height="1254" rx="281" fill="#000000"/><path fill="#1ED760" d="M400 431.22L400 449.02A33.5 33.5 0 0 0 429.38 482.26A417.4 417.4 0 0 1 747.31 701.81A28.5 28.5 0 0 0 786.77 713.2L812.09 698.58A81.5 81.5 0 0 0 812.09 557.42L496.75 375.36A64.5 64.5 0 0 0 400 431.22ZM400 560.38L400 594.41A33.5 33.5 0 0 0 429.77 627.7A290.2 290.2 0 0 1 644.34 763.51A28.5 28.5 0 0 0 682.84 773.2L701.93 762.18A28.5 28.5 0 0 0 712.65 723.76A391.1 391.1 0 0 0 439.45 527.42A33.5 33.5 0 0 0 400 560.38ZM400 706.48L400 816.99A69 69 0 0 0 503.5 876.74L595.33 823.73A28.5 28.5 0 0 0 605.24 783.94A241.8 241.8 0 0 0 438.86 673.41A33.5 33.5 0 0 0 400 706.48Z"/></g>';
 const f1 = (v: number) => v.toFixed(1);
 const glyph = (c: string): [number, string] => GLYPHS[c] ?? [234, ''];
 const textWidth = (s: string, size: number) => ([...s].reduce((a, c) => a + glyph(c)[0], 0) * size) / 1000;

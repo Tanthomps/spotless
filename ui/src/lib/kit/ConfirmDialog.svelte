@@ -24,7 +24,7 @@
 			onclick={() => settleConfirm(false)}
 		/>
 		<AlertDialog.Content
-			class="fixed top-1/2 left-1/2 z-[1050] w-[420px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-bg-menu p-6 text-white shadow-modal outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
+			class="fixed top-1/2 left-1/2 z-[1050] w-[420px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 rounded-xl glass p-6 text-white shadow-modal outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
 		>
 			{#if p}
 				<AlertDialog.Title class="text-xl font-bold text-white">{p.title}</AlertDialog.Title>

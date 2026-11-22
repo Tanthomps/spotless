@@ -23,5 +23,5 @@ desktop-only: the computer's account name (iOS uses the YouTube account or profi
 
 ios-only: sign-in with cookies from the app's own WKWebView: account_sign_in account_watch
 ios-only: mpv's picture in the app's CAMetalLayer, and its frames for Picture in Picture: set_video_layer set_video_visible video_stats video_proxy_url set_video_pip pip_frame
-ios-only: conveniences the desktop does with playlist_index and remove_from_playlist: downloads_collection_songs lib_playlist_remove_videos lib_playlists_containing
+ios-only: conveniences the desktop does with playlist_index and remove_from_playlist: downloads_collection_songs lib_playlists_containing
 desktop-only: the custom title bar's double-click follows the macOS setting (iPhone has no window): title_bar_double_click

@@ -118,6 +118,12 @@ pub async fn lib_playlist_remove(state: St<'_>, id: String, row_ids: Vec<i64>) -
     library::lib_playlist_remove(&state, id, row_ids).await
 }
 
+/// Remove songs by video id (collaborative playlists apply others' removals this way).
+#[tauri::command]
+pub async fn lib_playlist_remove_videos(state: St<'_>, id: String, video_ids: Vec<String>) -> R<Vec<PlaylistEntry>> {
+    library::lib_playlist_remove_videos(&state, id, video_ids).await
+}
+
 #[tauri::command]
 pub async fn lib_playlist_insert_entries(state: St<'_>, id: String, entries: Vec<PlaylistEntry>) -> R<()> {
     library::lib_playlist_insert_entries(&state, id, entries).await

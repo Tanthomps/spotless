@@ -324,7 +324,7 @@
 	>
 </div>
 {#if mixOpen}
-	<div class="glass mx-4 mt-2 rounded-lg p-3 text-white">
+	<div class="glass relative mx-4 mt-2 rounded-lg p-3 text-white">
 		<div class="flex items-baseline justify-between">
 			<span class="text-sm font-bold">Transitions</span>
 			<span class="text-xs text-text-subdued tabular-nums">{mixSecs === 0 ? 'Off' : `${mixSecs} s crossfade`}</span>

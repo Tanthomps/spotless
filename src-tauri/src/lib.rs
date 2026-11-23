@@ -1413,6 +1413,7 @@ pub fn run() {
             downloads::commands::downloads_sync,
             downloads::commands::downloads_set_settings,
             downloads::commands::downloads_set_dir,
+            downloads::commands::song_export,
             downloads::commands::downloads_songs,
             // ── end stream: downloads ──
         ]))

@@ -262,6 +262,28 @@ enum Diagnostics {
         return lines.joined(separator: "\n")
     }
 
+    /// Settings › About › Send debug log: the core's log, the audio trace and the queue as it is
+    /// now, as one text file for the share sheet.
+    @MainActor static func debugLog(_ app: AppModel) -> URL {
+        let info = Bundle.main.infoDictionary
+        let version = "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+        var lines = ["Spotless debug log", "App: \(version)", "iOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+                     "When: \(ISO8601DateFormatter().string(from: Date()))", "Output: \(AudioRoute.shared.externalName ?? "iPhone")", "Shuffle: \(app.player.queue.shuffle == true), source: \(app.player.queue.sourceName ?? "?")", ""]
+        let q = app.player.queue
+        lines.append("Queue (\(q.items.count) songs, playing #\(q.currentIndex + 1)):")
+        for (i, s) in q.items.enumerated() {
+            lines.append("\(i == q.currentIndex ? ">" : " ") \(i + 1). \(s.title) - \(s.artists) [\(s.videoId)]")
+        }
+        let dir = logURL?.deletingLastPathComponent()
+        for name in ["encore.log.1", "encore.log", "audio.log"] {
+            guard let url = dir?.appendingPathComponent(name), let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            lines += ["", "=== \(name) ==="] + text.split(separator: "\n", omittingEmptySubsequences: false).suffix(4000).map(String.init)
+        }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("Spotless debug log.txt")
+        try? lines.joined(separator: "\n").write(to: out, atomically: true, encoding: .utf8)
+        return out
+    }
+
     /// Writes the report next to the log and returns its URL (a temp file if Caches is unavailable).
     static func write(_ failure: CoreStartFailure) -> URL {
         let dir = logURL?.deletingLastPathComponent() ?? FileManager.default.temporaryDirectory

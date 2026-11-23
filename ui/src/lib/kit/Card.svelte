@@ -43,6 +43,7 @@
 		title,
 		subtitle,
 		subtitleSnippet,
+		artists,
 		image,
 		round,
 		kind,
@@ -60,6 +61,8 @@
 		title: string;
 		subtitle?: string | null;
 		subtitleSnippet?: Snippet;
+		/** Song cards: the artist line as runs; names with an id link to the artist (Spotify). */
+		artists?: { text: string; id?: string | null }[];
 		image?: string | null;
 		round?: boolean;
 		kind?: string;
@@ -184,6 +187,10 @@
 			<div class="mt-0.5 line-clamp-2 text-sm leading-[19px] text-text-subdued">
 				{@render subtitleSnippet()}
 			</div>
+		{:else if artists?.some((r) => r.id)}
+			<p class="mt-0.5 line-clamp-2 text-sm leading-[19px] text-text-subdued">
+				{#each artists as r, i (i)}{#if i > 0}{', '}{/if}{#if r.id}<a href={`/artist/${encodeURIComponent(r.id)}`} class="hover:text-white hover:underline" draggable="false">{r.text}</a>{:else}{r.text}{/if}{/each}
+			</p>
 		{:else if subtitle}
 			<p class="mt-0.5 line-clamp-2 text-sm leading-[19px] text-text-subdued">{subtitle}</p>
 		{/if}

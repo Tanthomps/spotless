@@ -2018,6 +2018,8 @@ export const downloadsSetSettings = (patch: {
 }) => invoke<DownloadsSnapshot>('downloads_set_settings', { patch });
 export const downloadsSetDir = (path: string) =>
 	invoke<DownloadsSnapshot>('downloads_set_dir', { path });
+/** Share › Download: the song as an .m4a at `path`, apart from offline downloads. */
+export const songExport = (videoId: string, path: string) => invoke<void>('song_export', { videoId, path });
 export const downloadsSongs = () => invoke<SongItem[]>('downloads_songs');
 export const onDownloadsChanged = (cb: (s: DownloadsChanged) => void): Promise<UnlistenFn> =>
 	listen<DownloadsChanged>('downloads:changed', (e) => cb(e.payload));

@@ -258,6 +258,8 @@ pub enum AudioQuality {
     Low,
     /// Desktop has no metered-network concept → treat AUTO as "prefer HIGH" (context/12).
     Auto,
+    /// The best AAC (mp4a) stream only: a file other apps open (Premiere, Final Cut), never opus.
+    Aac,
 }
 
 /// The rendition of a live HLS master playlist to hand mpv (#424), so it opens one and none of
@@ -312,6 +314,10 @@ pub fn find_format(data: &StreamingData, quality: AudioQuality) -> Option<&Forma
                 .then(a.codec_score().cmp(&b.codec_score()))
                 .then(a.bitrate.cmp(&b.bitrate))
         }),
+        AudioQuality::Aac => audio
+            .into_iter()
+            .filter(|f| f.mime_type.contains("mp4a"))
+            .max_by(|a, b| a.quality_rank().cmp(&b.quality_rank()).then(a.bitrate.cmp(&b.bitrate))),
         AudioQuality::Low => {
             let capped: Vec<&&Format> = audio.iter().filter(|f| f.bitrate <= 128_000).collect();
             let pool = if capped.is_empty() { audio.iter().collect() } else { capped };
@@ -400,6 +406,21 @@ pub struct Thumbnail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Aac takes the best mp4a over a better opus, and finds nothing when there's no AAC.
+    #[test]
+    fn aac_quality_picks_mp4a_only() {
+        let json = r#"{"adaptiveFormats": [
+            {"itag": 251, "url": "o", "mimeType": "audio/webm; codecs=\"opus\"", "bitrate": "160000", "audioQuality": "AUDIO_QUALITY_MEDIUM"},
+            {"itag": 139, "url": "l", "mimeType": "audio/mp4; codecs=\"mp4a.40.5\"", "bitrate": "48000", "audioQuality": "AUDIO_QUALITY_LOW"},
+            {"itag": 140, "url": "a", "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"", "bitrate": "130000", "audioQuality": "AUDIO_QUALITY_MEDIUM"}
+        ]}"#;
+        let sd: StreamingData = serde_json::from_str(json).unwrap();
+        assert_eq!(find_format(&sd, AudioQuality::High).unwrap().itag, 251);
+        assert_eq!(find_format(&sd, AudioQuality::Aac).unwrap().itag, 140);
+        let opus: StreamingData = serde_json::from_str(r#"{"adaptiveFormats": [{"itag": 251, "url": "o", "mimeType": "audio/webm; codecs=\"opus\"", "bitrate": "1", "audioQuality": "AUDIO_QUALITY_MEDIUM"}]}"#).unwrap();
+        assert!(find_format(&opus, AudioQuality::Aac).is_none());
+    }
 
     /// Regression: YouTube sends `expiresInSeconds` as a STRING ("21540") on every client.
     /// Parsing it as i64 rejected the whole response and exhausted all direct clients.

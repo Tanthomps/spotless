@@ -158,6 +158,8 @@ protocol CoreClient: AnyObject, Sendable {
     // Stream ios-polish: the "Add to playlist" picker (checkmarks, uncheck removes).
     func playlistsContaining(videoId: String) async throws -> [String]           // lib_playlists_containing
     func removeFromPlaylist(id: String, videoIds: [String]) async throws         // lib_playlist_remove_videos
+    /// Share › Download: the song as an .m4a at `path`, apart from offline downloads.
+    func exportSong(videoId: String, to path: String) async throws               // song_export
     func song(videoId: String) async throws -> SongItem                          // song (shared links)
     func downloadedSongs(collectionId: String) async throws -> [SongItem]        // downloads_collection_songs
     /// `names`: a new name per list index; `local`: on this phone rather than the YouTube account.

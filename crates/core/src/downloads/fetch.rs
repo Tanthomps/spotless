@@ -375,6 +375,70 @@ where
     Ok((format!("tracks/{name}"), have, src))
 }
 
+/// "Download" from a song's Share menu: the song as an `.m4a` file at `dest`, for video editors
+/// and the like. Separate from offline downloads (nothing is recorded): always the AAC stream,
+/// never opus, fetched to a temp folder and then moved into place.
+pub async fn export_aac(state: &Arc<AppState>, video_id: &str, dest: &Path) -> Result<(), String> {
+    if crate::podcasts::is_rss_id(video_id) || crate::local::is_local_song(video_id) {
+        return Err("Only songs from YouTube Music can be saved this way".into());
+    }
+    // `dest` comes from the UI (a save panel): only ever a new or replaced .m4a in a real folder.
+    let is_m4a = dest.extension().is_some_and(|e| e.eq_ignore_ascii_case("m4a"));
+    let parent_ok = dest.parent().is_some_and(|p| p.is_dir());
+    let is_link = std::fs::symlink_metadata(dest).is_ok_and(|m| m.file_type().is_symlink());
+    if !dest.is_absolute() || !is_m4a || !parent_ok || is_link {
+        return Err("Pick a folder and an .m4a file name to save to".into());
+    }
+    let aac = |state: &Arc<AppState>| {
+        let state = state.clone();
+        let id = video_id.to_owned();
+        async move {
+            let data = state
+                .orchestrator
+                .resolve(&id, false, AudioQuality::Aac, &state.disabled_clients())
+                .await
+                .map_err(|e| JobError::Failed(e.to_string()))?;
+            if data.live {
+                return Err(JobError::Failed("live broadcasts can't be saved".into()));
+            }
+            Ok::<_, JobError>(Source { url: data.stream_url, headers: data.headers, itag: data.itag, loudness_db: None })
+        }
+    };
+    let src = aac(state).await.map_err(|e| e.to_string())?;
+    let tmp = std::env::temp_dir().join("spotless-export");
+    let stem = file_stem(video_id);
+    let refresh = || async { Some(aac(state).await) };
+    let (file, _, _) = fetch_to_file(&tmp, &stem, src, refresh, CHUNK, &|_, _| {}, &|| false)
+        .await
+        .map_err(|e| e.to_string())?;
+    let got = tmp.join(&file);
+    if !file.ends_with(".m4a") {
+        let _ = std::fs::remove_file(&got);
+        return Err("YouTube didn't offer an M4A for this song".into());
+    }
+    // YouTube's AAC is a fragmented (DASH) MP4, which some editors mis-read. On the Mac, rewrap
+    // it as a plain .m4a with AVFoundation (passthrough: the same audio, nothing re-encoded). The
+    // iPhone app does the same in Swift after this returns.
+    #[cfg(target_os = "macos")]
+    {
+        let ok = std::process::Command::new("/usr/bin/avconvert")
+            .args(["-s"]).arg(&got).args(["-o"]).arg(dest).args(["-p", "PresetPassthrough", "--replace"])
+            .output()
+            .is_ok_and(|o| o.status.success() && std::fs::metadata(dest).is_ok_and(|m| m.len() > 0));
+        if ok {
+            let _ = std::fs::remove_file(&got);
+            return Ok(());
+        }
+        tracing::warn!("song export: avconvert failed, saving the file as YouTube sent it");
+    }
+    if std::fs::rename(&got, dest).is_err() {
+        // Another volume: copy, then drop the temp file.
+        std::fs::copy(&got, dest).map_err(|e| disk_error(&e).to_string())?;
+        let _ = std::fs::remove_file(&got);
+    }
+    Ok(())
+}
+
 /// Save artwork as `art/<stem>.jpg`; returns its relative path. Best effort.
 pub async fn save_art(dir: &Path, stem: &str, url: &str) -> Option<String> {
     if !url.starts_with("http") {

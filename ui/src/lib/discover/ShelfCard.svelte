@@ -5,6 +5,7 @@
 	import Card from '$lib/kit/Card.svelte';
 	import { openItemMenu } from '$lib/kit/menus';
 	import { cardSubtitle } from './format';
+	import { displayRuns } from '$lib/artistruns';
 	import {
 		isPlaying,
 		openShelfItem,
@@ -30,6 +31,7 @@
 <Card
 	title={item.title}
 	{subtitle}
+	artists={item.kind === 'song' && item.song ? displayRuns(item.song.artist_runs, item.song.artists, item.song.artist_id) : undefined}
 	image={shelfImage(item)}
 	kind={item.kind}
 	{href}

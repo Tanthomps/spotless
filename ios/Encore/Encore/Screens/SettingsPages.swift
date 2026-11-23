@@ -430,6 +430,7 @@ private struct StorageSettings: View {
 // MARK: about
 
 private struct AboutSettings: View {
+    @Environment(AppModel.self) private var app
     private var version: String {
         let i = Bundle.main.infoDictionary
         return "\(i?["CFBundleShortVersionString"] as? String ?? "0.1.0") (\(i?["CFBundleVersion"] as? String ?? "1"))"
@@ -453,6 +454,22 @@ private struct AboutSettings: View {
         }
         .padding(.horizontal, Space.gutter).frame(minHeight: 56)
         SettingsNote(text: "Spotless is free and open source software under the GPL-3.0. No ads, no account.")
+        Button {
+            let url = Diagnostics.debugLog(app)
+            let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            guard let top = ShareSheet.topViewController() else { return }
+            vc.popoverPresentationController?.sourceView = top.view
+            top.present(vc, animated: true)
+        } label: {
+            HStack {
+                Text("Send debug log").font(Typo.font(16))
+                Spacer()
+                Icon(name: "export", size: 18).foregroundStyle(Palette.subdued)
+            }
+            .padding(.horizontal, Space.gutter).frame(minHeight: 56).contentShape(Rectangle())
+        }
+        .buttonStyle(SettingsPressStyle())
+        .accessibilityIdentifier("about-debug-log")
         SettingsHeader(title: "Credits")
         ForEach(credits, id: \.0) { name, what in
             VStack(alignment: .leading, spacing: 3) {

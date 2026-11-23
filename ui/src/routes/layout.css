@@ -822,10 +822,9 @@ input[type='range'].range:focus-visible::-webkit-slider-thumb {
 /* The blur sits on a ::before layer, never on the element: backdrop-filter on an element makes it
    the containing block for its position:fixed descendants, which put submenus (bits-ui renders
    them inside their parent menu) off where they belong and out of sight. A .glass element must be
-   positioned itself (fixed, absolute or relative) so the layer lines up with it. */
-.menu-surface {
-	position: relative;
-}
+   positioned itself (fixed, absolute or relative) so the layer lines up with it. A menu is NOT
+   positioned: its layer lines up with bits-ui's floating wrapper, and a positioned menu would
+   become the box its scroll area clips the submenu to. */
 .glass,
 .menu-surface {
 	isolation: isolate;
